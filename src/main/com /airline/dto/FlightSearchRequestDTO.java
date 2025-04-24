@@ -9,13 +9,10 @@ import java.time.LocalDateTime;
 @Data
 @NoArgsConstructor
 @AllArgsConstructor
-public class FlightDTO {
-    private Long id;
-    private String flightNumber;
+public class FlightSearchRequestDTO {
     private String departureAirport;
     private String arrivalAirport;
-    private LocalDateTime departureTime;
-    private LocalDateTime arrivalTime;
-    private String aircraftType;
+    private LocalDateTime departureTimeFrom;
+    private LocalDateTime departureTimeTo;
     private String status;
 }

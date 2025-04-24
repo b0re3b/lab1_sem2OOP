@@ -29,13 +29,13 @@ public class DatabaseConnection {
             }
             props.load(input);
 
-            String host = props.getProperty("db.host", "localhost");
-            String port = props.getProperty("db.port", "5432");
-            String dbname = props.getProperty("db.name", "airline_company");
+            String host = props.getProperty("db.host");
+            String port = props.getProperty("db.port");
+            String dbname = props.getProperty("db.name");
 
             this.url = "jdbc:postgresql://" + host + ":" + port + "/" + dbname;
-            this.username = props.getProperty("db.username", "postgres");
-            this.password = props.getProperty("db.password", "postgres");
+            this.username = props.getProperty("db.username");
+            this.password = props.getProperty("db.password");
 
             // Реєстрація драйвера JDBC
             Class.forName("org.postgresql.Driver");

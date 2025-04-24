@@ -9,11 +9,11 @@ import java.util.List;
 @Data
 @NoArgsConstructor
 @AllArgsConstructor
-public class CrewDTO {
-    private Long id;
+public class CrewAssignmentRequestDTO {
     private Long flightId;
-    private PilotDTO pilot;
-    private NavigatorDTO navigator;
-    private RadioOperatorDTO radioOperator;
-    private List<StewardDTO> stewards;
+    private Long pilotId;
+    private Long navigatorId;
+    private Long radioOperatorId;
+    private List<Long> stewardIds;
 }
+
