@@ -9,8 +9,6 @@ from .base import BaseRepository
 from ..models.flight_assignment import FlightAssignment, AssignmentStatus
 from ..models.flight import Flight
 from ..models.crew_member import CrewMember
-from ..models.crew_position import CrewPosition
-
 logger = logging.getLogger(__name__)
 
 
