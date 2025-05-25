@@ -5,21 +5,31 @@ from sqlalchemy import and_, or_, text
 from sqlalchemy.exc import SQLAlchemyError, IntegrityError
 from sqlalchemy.orm import Session, joinedload
 
-from .base import BaseRepository
 from ..models.flight_assignment import FlightAssignment, AssignmentStatus
 from ..models.flight import Flight
 from ..models.crew_member import CrewMember
+
 logger = logging.getLogger(__name__)
 
 
-class AssignmentRepository(BaseRepository[FlightAssignment]):
+class AssignmentRepository:
     """
     Репозиторій для роботи з призначеннями екіпажу на рейси
     Реалізує специфічну логіку для управління призначеннями
     """
 
     def __init__(self, db_session: Session):
-        super().__init__(db_session, FlightAssignment)
+        self.db = db_session
+
+    def get_by_id(self, assignment_id: int) -> Optional[FlightAssignment]:
+        """
+        Отримати призначення за ID
+        """
+        try:
+            return self.db.query(FlightAssignment).filter(FlightAssignment.id == assignment_id).first()
+        except SQLAlchemyError as e:
+            logger.error(f"Error getting assignment by ID {assignment_id}: {str(e)}")
+            raise
 
     def create_assignment(self, flight_id: int, crew_member_id: int,
                           assigned_by: int, notes: Optional[str] = None) -> Optional[FlightAssignment]:
@@ -122,7 +132,7 @@ class AssignmentRepository(BaseRepository[FlightAssignment]):
 
     def get_conflicting_assignments(self, crew_member_id: int,
                                     departure_time: datetime,
-                                    arrival_time: datetime) -> List[FlightAssignment]:
+                                    arrival_time: datetime) -> list[type[FlightAssignment]]:
         """
         Знайти конфліктуючі призначення для члена екіпажу
         """
@@ -185,6 +195,69 @@ class AssignmentRepository(BaseRepository[FlightAssignment]):
             logger.error(f"Error cancelling assignment {assignment_id}: {str(e)}")
             raise
 
+    def update_assignment(self, assignment_id: int, **kwargs) -> Optional[FlightAssignment]:
+        """
+        Оновити призначення
+        """
+        try:
+            assignment = self.get_by_id(assignment_id)
+            if not assignment:
+                return None
+
+            for key, value in kwargs.items():
+                if hasattr(assignment, key):
+                    setattr(assignment, key, value)
+
+            self.db.commit()
+            self.db.refresh(assignment)
+
+            logger.info(f"Updated assignment {assignment_id}")
+            return assignment
+        except SQLAlchemyError as e:
+            self.db.rollback()
+            logger.error(f"Error updating assignment {assignment_id}: {str(e)}")
+            raise
+
+    def delete_assignment(self, assignment_id: int) -> bool:
+        """
+        Видалити призначення
+        """
+        try:
+            assignment = self.get_by_id(assignment_id)
+            if not assignment:
+                return False
+
+            self.db.delete(assignment)
+            self.db.commit()
+
+            logger.info(f"Deleted assignment {assignment_id}")
+            return True
+        except SQLAlchemyError as e:
+            self.db.rollback()
+            logger.error(f"Error deleting assignment {assignment_id}: {str(e)}")
+            raise
+
+    def get_all_assignments(self, limit: Optional[int] = None,
+                           offset: Optional[int] = None) -> list[type[FlightAssignment]]:
+        """
+        Отримати всі призначення
+        """
+        try:
+            query = self.db.query(FlightAssignment).options(
+                joinedload(FlightAssignment.flight),
+                joinedload(FlightAssignment.crew_member)
+            )
+
+            if offset:
+                query = query.offset(offset)
+            if limit:
+                query = query.limit(limit)
+
+            return query.all()
+        except SQLAlchemyError as e:
+            logger.error(f"Error getting all assignments: {str(e)}")
+            raise
+
     def get_flight_crew_statistics(self, flight_id: int) -> Dict[str, Any]:
         """
         Отримати статистику по екіпажу рейсу
@@ -214,7 +287,7 @@ class AssignmentRepository(BaseRepository[FlightAssignment]):
 
     def get_assignments_by_date_range(self, start_date: datetime,
                                       end_date: datetime,
-                                      status: Optional[AssignmentStatus] = None) -> List[FlightAssignment]:
+                                      status: Optional[AssignmentStatus] = None) -> list[type[FlightAssignment]]:
         """
         Отримати призначення в заданому діапазоні дат
         """

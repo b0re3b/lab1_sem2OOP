@@ -1,12 +1,9 @@
 import logging
 from datetime import datetime
 from typing import List, Optional, Dict, Any
-
 from sqlalchemy import and_, or_, func
 from sqlalchemy.exc import SQLAlchemyError, IntegrityError
 from sqlalchemy.orm import Session, joinedload
-
-from .base import BaseRepository
 from ..models.crew_member import CrewMember, CertificationLevel
 from ..models.crew_position import CrewPosition
 from ..models.flight import Flight
@@ -15,14 +12,14 @@ from ..models.flight_assignment import FlightAssignment, AssignmentStatus
 logger = logging.getLogger(__name__)
 
 
-class CrewRepository(BaseRepository[CrewMember]):
+class CrewRepository:
     """
     Репозиторій для роботи з членами екіпажу
     Реалізує специфічну логіку для управління екіпажем
     """
 
-    def __init__(self, db_session: Session):
-        super().__init__(db_session, CrewMember)
+    def __init__(self):
+        super().__init__(CrewMember)
 
     def create_crew_member(self, employee_id: str, first_name: str, last_name: str,
                            position_id: int, experience_years: int = 0,

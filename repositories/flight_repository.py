@@ -1,26 +1,80 @@
 import logging
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 from typing import Optional, List, Dict, Any
-
 from sqlalchemy import and_, func
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session, joinedload
-
 from models.flight import Flight, FlightStatus
 from models.flight_assignment import FlightAssignment
-from repositories.base import BaseRepository
 
 logger = logging.getLogger(__name__)
 
 
-class FlightRepository(BaseRepository[Flight]):
+class FlightRepository:
     """
     Репозиторій для роботи з рейсами
     Містить специфічні методи для управління рейсами
     """
 
     def __init__(self, db_session: Session):
-        super().__init__(db_session, Flight)
+        self.db = db_session
+
+    def get_by_id(self, flight_id: int) -> Optional[Flight]:
+        """Отримати рейс за ID"""
+        try:
+            return self.db.query(Flight).filter(Flight.id == flight_id).first()
+        except SQLAlchemyError as e:
+            logger.error(f"Error getting flight by id {flight_id}: {str(e)}")
+            raise
+
+    def get_all(self) -> List[Flight]:
+        """Отримати всі рейси"""
+        try:
+            return self.db.query(Flight).order_by(Flight.departure_time).all()
+        except SQLAlchemyError as e:
+            logger.error(f"Error getting all flights: {str(e)}")
+            raise
+
+    def create(self, flight: Flight) -> Flight:
+        """Створити новий рейс"""
+        try:
+            self.db.add(flight)
+            self.db.commit()
+            self.db.refresh(flight)
+            logger.info(f"Created flight {flight.flight_number}")
+            return flight
+        except SQLAlchemyError as e:
+            self.db.rollback()
+            logger.error(f"Error creating flight: {str(e)}")
+            raise
+
+    def update(self, flight: Flight) -> Flight:
+        """Оновити рейс"""
+        try:
+            self.db.commit()
+            self.db.refresh(flight)
+            logger.info(f"Updated flight {flight.flight_number}")
+            return flight
+        except SQLAlchemyError as e:
+            self.db.rollback()
+            logger.error(f"Error updating flight: {str(e)}")
+            raise
+
+    def delete(self, flight_id: int) -> bool:
+        """Видалити рейс"""
+        try:
+            flight = self.get_by_id(flight_id)
+            if not flight:
+                return False
+
+            self.db.delete(flight)
+            self.db.commit()
+            logger.info(f"Deleted flight with id {flight_id}")
+            return True
+        except SQLAlchemyError as e:
+            self.db.rollback()
+            logger.error(f"Error deleting flight with id {flight_id}: {str(e)}")
+            raise
 
     def get_by_flight_number(self, flight_number: str) -> Optional[Flight]:
         """Отримати рейс за номером"""
@@ -84,8 +138,6 @@ class FlightRepository(BaseRepository[Flight]):
         try:
             start_date = datetime.now()
             end_date = datetime.now().replace(hour=23, minute=59, second=59)
-
-            from datetime import timedelta
             end_date += timedelta(days=days_ahead)
 
             return self.db.query(Flight).filter(
@@ -216,15 +268,9 @@ class FlightRepository(BaseRepository[Flight]):
                 created_by=created_by
             )
 
-            self.db.add(flight)
-            self.db.commit()
-            self.db.refresh(flight)
+            return self.create(flight)
 
-            logger.info(f"Created flight {flight_number}")
-            return flight
-
-        except SQLAlchemyError as e:
-            self.db.rollback()
+        except (SQLAlchemyError, ValueError) as e:
             logger.error(f"Error creating flight {flight_number}: {str(e)}")
             raise
 
@@ -237,14 +283,12 @@ class FlightRepository(BaseRepository[Flight]):
 
             old_status = flight.status
             flight.status = new_status
-            self.db.commit()
-            self.db.refresh(flight)
 
+            updated_flight = self.update(flight)
             logger.info(f"Updated flight {flight.flight_number} status from {old_status} to {new_status}")
-            return flight
+            return updated_flight
 
         except SQLAlchemyError as e:
-            self.db.rollback()
             logger.error(f"Error updating flight status for id {flight_id}: {str(e)}")
             raise
 
@@ -258,9 +302,7 @@ class FlightRepository(BaseRepository[Flight]):
             ).group_by(Flight.status).all()
 
             today_flights = len(self.get_today_flights())
-
             upcoming_flights = len(self.get_upcoming_flights())
-
             understaffed_count = len(self.get_understaffed_flights())
 
             return {
@@ -296,14 +338,12 @@ class FlightRepository(BaseRepository[Flight]):
                 raise ValueError("Cannot cancel completed flight")
 
             flight.status = FlightStatus.CANCELLED
-            self.db.commit()
-            self.db.refresh(flight)
+            updated_flight = self.update(flight)
 
             logger.info(f"Cancelled flight {flight.flight_number}" +
                         (f" (reason: {reason})" if reason else ""))
-            return flight
+            return updated_flight
 
-        except SQLAlchemyError as e:
-            self.db.rollback()
+        except (SQLAlchemyError, ValueError) as e:
             logger.error(f"Error cancelling flight with id {flight_id}: {str(e)}")
             raise

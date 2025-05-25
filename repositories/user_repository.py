@@ -2,20 +2,76 @@ from typing import Optional, List
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import SQLAlchemyError
 from models.user import User, UserRole
-from repositories.base import BaseRepository
 import logging
 
 logger = logging.getLogger(__name__)
 
 
-class UserRepository(BaseRepository[User]):
+class UserRepository:
     """
     Репозиторій для роботи з користувачами системи
-    Реалізує специфічні методи для User моделі
+    Реалізує всі методи для User моделі
     """
 
     def __init__(self, db_session: Session):
-        super().__init__(db_session, User)
+        self.db = db_session
+
+    def get_by_id(self, user_id: int) -> Optional[User]:
+        """Отримати користувача за ID"""
+        try:
+            return self.db.query(User).filter(User.id == user_id).first()
+        except SQLAlchemyError as e:
+            logger.error(f"Error getting user by id {user_id}: {str(e)}")
+            raise
+
+    def get_all(self) -> List[User]:
+        """Отримати всіх користувачів"""
+        try:
+            return self.db.query(User).all()
+        except SQLAlchemyError as e:
+            logger.error(f"Error getting all users: {str(e)}")
+            raise
+
+    def create(self, user: User) -> User:
+        """Створити користувача"""
+        try:
+            self.db.add(user)
+            self.db.commit()
+            self.db.refresh(user)
+            logger.info(f"Created user with id {user.id}")
+            return user
+        except SQLAlchemyError as e:
+            self.db.rollback()
+            logger.error(f"Error creating user: {str(e)}")
+            raise
+
+    def update(self, user: User) -> User:
+        """Оновити користувача"""
+        try:
+            self.db.commit()
+            self.db.refresh(user)
+            logger.info(f"Updated user with id {user.id}")
+            return user
+        except SQLAlchemyError as e:
+            self.db.rollback()
+            logger.error(f"Error updating user with id {user.id}: {str(e)}")
+            raise
+
+    def delete(self, user_id: int) -> bool:
+        """Видалити користувача"""
+        try:
+            user = self.get_by_id(user_id)
+            if not user:
+                return False
+
+            self.db.delete(user)
+            self.db.commit()
+            logger.info(f"Deleted user with id {user_id}")
+            return True
+        except SQLAlchemyError as e:
+            self.db.rollback()
+            logger.error(f"Error deleting user with id {user_id}: {str(e)}")
+            raise
 
     def get_by_username(self, username: str) -> Optional[User]:
         """Отримати користувача за username"""
