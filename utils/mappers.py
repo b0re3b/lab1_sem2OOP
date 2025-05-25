@@ -1,423 +1,405 @@
-from abc import ABC, abstractmethod
-from typing import Dict, Any, Optional, List
+from typing import Dict, List, Any, Optional, Type, TypeVar
 from datetime import datetime
-from dataclasses import dataclass
+from models.user import User
+from models.flight import Flight
+from models.crew_member import CrewMember
+from models.crew_position import CrewPosition
+from models.flight_assignment import FlightAssignment
+from models.log import OperationLog
+
+T = TypeVar('T')
 
 
-@dataclass
-class UserDTO:
-    """DTO для користувача"""
-    id: Optional[int] = None
-    keycloak_id: Optional[str] = None
-    username: str = ""
-    email: str = ""
-    first_name: str = ""
-    last_name: str = ""
-    role: str = ""
-    is_active: bool = True
-    created_at: Optional[datetime] = None
-    updated_at: Optional[datetime] = None
+class BaseMapper:
+    """Базовий клас для всіх маперів"""
 
+    @staticmethod
+    def safe_get(data: Dict, key: str, default: Any = None, converter: callable = None):
+        """Безпечне отримання значення з словника з конвертацією"""
+        value = data.get(key, default)
+        if value is not None and converter:
+            try:
+                return converter(value)
+            except (ValueError, TypeError):
+                return default
+        return value
 
-@dataclass
-class FlightDTO:
-    """DTO для рейсу"""
-    id: Optional[int] = None
-    flight_number: str = ""
-    departure_city: str = ""
-    arrival_city: str = ""
-    departure_time: Optional[datetime] = None
-    arrival_time: Optional[datetime] = None
-    aircraft_type: str = ""
-    status: str = "SCHEDULED"
-    crew_required: int = 4
-    created_by: Optional[int] = None
-    created_at: Optional[datetime] = None
-    updated_at: Optional[datetime] = None
-
-
-@dataclass
-class CrewMemberDTO:
-    """DTO для члена екіпажу"""
-    id: Optional[int] = None
-    employee_id: str = ""
-    first_name: str = ""
-    last_name: str = ""
-    position_id: int = 0
-    position_name: Optional[str] = None
-    experience_years: int = 0
-    certification_level: str = "JUNIOR"
-    is_available: bool = True
-    phone: Optional[str] = None
-    email: Optional[str] = None
-    created_at: Optional[datetime] = None
-    updated_at: Optional[datetime] = None
-
-
-@dataclass
-class FlightAssignmentDTO:
-    """DTO для призначення екіпажу на рейс"""
-    id: Optional[int] = None
-    flight_id: int = 0
-    crew_member_id: int = 0
-    assigned_by: int = 0
-    assigned_at: Optional[datetime] = None
-    status: str = "ASSIGNED"
-    notes: Optional[str] = None
-    # Додаткові поля для зручності
-    flight_number: Optional[str] = None
-    crew_member_name: Optional[str] = None
-    position_name: Optional[str] = None
-    assigned_by_name: Optional[str] = None
-
-
-class BaseMapper(ABC):
-    """Базовий клас для всіх мапперів"""
-
-    @abstractmethod
-    def to_dto(self, entity: Any) -> Any:
-        """Конвертація з entity в DTO"""
-        pass
-
-    @abstractmethod
-    def to_entity(self, dto: Any) -> Any:
-        """Конвертація з DTO в entity"""
-        pass
-
-    @abstractmethod
-    def to_dict(self, dto: Any) -> Dict[str, Any]:
-        """Конвертація DTO в словник"""
-        pass
-
-    @abstractmethod
-    def from_dict(self, data: Dict[str, Any]) -> Any:
-        """Створення DTO зі словника"""
-        pass
+    @staticmethod
+    def timestamp_to_datetime(timestamp: Any) -> Optional[datetime]:
+        """Конвертація timestamp в datetime"""
+        if timestamp is None:
+            return None
+        if isinstance(timestamp, datetime):
+            return timestamp
+        if isinstance(timestamp, str):
+            try:
+                return datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
+            except ValueError:
+                return None
+        return None
 
 
 class UserMapper(BaseMapper):
-    """Маппер для користувачів"""
+    """Мапер для користувачів"""
 
-    def to_dto(self, entity: Any) -> UserDTO | None:
-        """Конвертація з SQLAlchemy entity в UserDTO"""
-        if not entity:
-            return None
-
-        return UserDTO(
-            id=entity.id,
-            keycloak_id=entity.keycloak_id,
-            username=entity.username,
-            email=entity.email,
-            first_name=entity.first_name,
-            last_name=entity.last_name,
-            role=entity.role,
-            is_active=entity.is_active,
-            created_at=entity.created_at,
-            updated_at=entity.updated_at
-        )
-
-    def to_entity(self, dto: UserDTO) -> Dict[str, Any]:
-        """Конвертація UserDTO в дані для entity"""
-        return {
-            'keycloak_id': dto.keycloak_id,
-            'username': dto.username,
-            'email': dto.email,
-            'first_name': dto.first_name,
-            'last_name': dto.last_name,
-            'role': dto.role,
-            'is_active': dto.is_active
-        }
-
-    def to_dict(self, dto: UserDTO) -> Dict[str, Any]:
-        """Конвертація UserDTO в словник"""
-        return {
-            'id': dto.id,
-            'keycloak_id': dto.keycloak_id,
-            'username': dto.username,
-            'email': dto.email,
-            'first_name': dto.first_name,
-            'last_name': dto.last_name,
-            'role': dto.role,
-            'is_active': dto.is_active,
-            'created_at': dto.created_at.isoformat() if dto.created_at else None,
-            'updated_at': dto.updated_at.isoformat() if dto.updated_at else None
-        }
-
-    def from_dict(self, data: Dict[str, Any]) -> UserDTO:
-        """Створення UserDTO зі словника"""
-        return UserDTO(
+    @staticmethod
+    def from_db_row(row: tuple, columns: List[str]) -> User:
+        """Перетворення рядка з БД в модель User"""
+        data = dict(zip(columns, row))
+        return User(
             id=data.get('id'),
             keycloak_id=data.get('keycloak_id'),
-            username=data.get('username', ''),
-            email=data.get('email', ''),
-            first_name=data.get('first_name', ''),
-            last_name=data.get('last_name', ''),
-            role=data.get('role', ''),
+            username=data.get('username'),
+            email=data.get('email'),
+            first_name=data.get('first_name'),
+            last_name=data.get('last_name'),
+            role=data.get('role'),
             is_active=data.get('is_active', True),
-            created_at=self._parse_datetime(data.get('created_at')),
-            updated_at=self._parse_datetime(data.get('updated_at'))
+            created_at=UserMapper.timestamp_to_datetime(data.get('created_at')),
+            updated_at=UserMapper.timestamp_to_datetime(data.get('updated_at'))
         )
 
-    def to_list_dto(self, entities: List[Any]) -> List[UserDTO]:
-        """Конвертація списку entities в список DTO"""
-        return [self.to_dto(entity) for entity in entities if entity]
+    @staticmethod
+    def to_dict(user: User) -> Dict[str, Any]:
+        """Перетворення моделі User в словник"""
+        return {
+            'id': user.id,
+            'keycloak_id': user.keycloak_id,
+            'username': user.username,
+            'email': user.email,
+            'first_name': user.first_name,
+            'last_name': user.last_name,
+            'role': user.role,
+            'is_active': user.is_active,
+            'created_at': user.created_at.isoformat() if user.created_at else None,
+            'updated_at': user.updated_at.isoformat() if user.updated_at else None,
+            'full_name': f"{user.first_name} {user.last_name}"
+        }
 
-    def _parse_datetime(self, dt_str: str) -> Optional[datetime]:
-        """Парсинг datetime з рядка"""
-        if not dt_str:
-            return None
-        try:
-            return datetime.fromisoformat(dt_str.replace('Z', '+00:00'))
-        except (ValueError, AttributeError):
-            return None
+    @staticmethod
+    def from_keycloak_data(keycloak_data: Dict[str, Any]) -> User:
+        """Перетворення даних з Keycloak в модель User"""
+        return User(
+            keycloak_id=keycloak_data.get('sub'),
+            username=keycloak_data.get('preferred_username'),
+            email=keycloak_data.get('email'),
+            first_name=keycloak_data.get('given_name', ''),
+            last_name=keycloak_data.get('family_name', ''),
+            role=UserMapper._extract_role_from_keycloak(keycloak_data),
+            is_active=True
+        )
+
+    @staticmethod
+    def _extract_role_from_keycloak(keycloak_data: Dict[str, Any]) -> str:
+        """Витягує роль з даних Keycloak"""
+        resource_access = keycloak_data.get('resource_access', {})
+        airline_client = resource_access.get('airline-system', {})
+        roles = airline_client.get('roles', [])
+
+        if 'admin' in roles:
+            return 'ADMIN'
+        elif 'dispatcher' in roles:
+            return 'DISPATCHER'
+        else:
+            return 'USER'
 
 
 class FlightMapper(BaseMapper):
-    """Маппер для рейсів"""
+    """Мапер для рейсів"""
 
-    def to_dto(self, entity: Any) -> FlightDTO | None:
-        """Конвертація з SQLAlchemy entity в FlightDTO"""
-        if not entity:
-            return None
-
-        return FlightDTO(
-            id=entity.id,
-            flight_number=entity.flight_number,
-            departure_city=entity.departure_city,
-            arrival_city=entity.arrival_city,
-            departure_time=entity.departure_time,
-            arrival_time=entity.arrival_time,
-            aircraft_type=entity.aircraft_type,
-            status=entity.status,
-            crew_required=entity.crew_required,
-            created_by=entity.created_by,
-            created_at=entity.created_at,
-            updated_at=entity.updated_at
-        )
-
-    def to_entity(self, dto: FlightDTO) -> Dict[str, Any]:
-        """Конвертація FlightDTO в дані для entity"""
-        return {
-            'flight_number': dto.flight_number,
-            'departure_city': dto.departure_city,
-            'arrival_city': dto.arrival_city,
-            'departure_time': dto.departure_time,
-            'arrival_time': dto.arrival_time,
-            'aircraft_type': dto.aircraft_type,
-            'status': dto.status,
-            'crew_required': dto.crew_required,
-            'created_by': dto.created_by
-        }
-
-    def to_dict(self, dto: FlightDTO) -> Dict[str, Any]:
-        """Конвертація FlightDTO в словник"""
-        return {
-            'id': dto.id,
-            'flight_number': dto.flight_number,
-            'departure_city': dto.departure_city,
-            'arrival_city': dto.arrival_city,
-            'departure_time': dto.departure_time.isoformat() if dto.departure_time else None,
-            'arrival_time': dto.arrival_time.isoformat() if dto.arrival_time else None,
-            'aircraft_type': dto.aircraft_type,
-            'status': dto.status,
-            'crew_required': dto.crew_required,
-            'created_by': dto.created_by,
-            'created_at': dto.created_at.isoformat() if dto.created_at else None,
-            'updated_at': dto.updated_at.isoformat() if dto.updated_at else None
-        }
-
-    def from_dict(self, data: Dict[str, Any]) -> FlightDTO:
-        """Створення FlightDTO зі словника"""
-        return FlightDTO(
+    @staticmethod
+    def from_db_row(row: tuple, columns: List[str]) -> Flight:
+        """Перетворення рядка з БД в модель Flight"""
+        data = dict(zip(columns, row))
+        return Flight(
             id=data.get('id'),
-            flight_number=data.get('flight_number', ''),
-            departure_city=data.get('departure_city', ''),
-            arrival_city=data.get('arrival_city', ''),
-            departure_time=self._parse_datetime(data.get('departure_time')),
-            arrival_time=self._parse_datetime(data.get('arrival_time')),
-            aircraft_type=data.get('aircraft_type', ''),
+            flight_number=data.get('flight_number'),
+            departure_city=data.get('departure_city'),
+            arrival_city=data.get('arrival_city'),
+            departure_time=FlightMapper.timestamp_to_datetime(data.get('departure_time')),
+            arrival_time=FlightMapper.timestamp_to_datetime(data.get('arrival_time')),
+            aircraft_type=data.get('aircraft_type'),
             status=data.get('status', 'SCHEDULED'),
             crew_required=data.get('crew_required', 4),
             created_by=data.get('created_by'),
-            created_at=self._parse_datetime(data.get('created_at')),
-            updated_at=self._parse_datetime(data.get('updated_at'))
+            created_at=FlightMapper.timestamp_to_datetime(data.get('created_at')),
+            updated_at=FlightMapper.timestamp_to_datetime(data.get('updated_at'))
         )
 
-    def to_list_dto(self, entities: List[Any]) -> List[FlightDTO]:
-        """Конвертація списку entities в список DTO"""
-        return [self.to_dto(entity) for entity in entities if entity]
+    @staticmethod
+    def to_dict(flight: Flight) -> Dict[str, Any]:
+        """Перетворення моделі Flight в словник"""
+        return {
+            'id': flight.id,
+            'flight_number': flight.flight_number,
+            'departure_city': flight.departure_city,
+            'arrival_city': flight.arrival_city,
+            'departure_time': flight.departure_time.isoformat() if flight.departure_time else None,
+            'arrival_time': flight.arrival_time.isoformat() if flight.arrival_time else None,
+            'aircraft_type': flight.aircraft_type,
+            'status': flight.status,
+            'crew_required': flight.crew_required,
+            'created_by': flight.created_by,
+            'created_at': flight.created_at.isoformat() if flight.created_at else None,
+            'updated_at': flight.updated_at.isoformat() if flight.updated_at else None,
+            'route': f"{flight.departure_city} → {flight.arrival_city}",
+            'duration_minutes': FlightMapper._calculate_duration(flight.departure_time, flight.arrival_time)
+        }
 
-    def _parse_datetime(self, dt_str: str) -> Optional[datetime]:
-        """Парсинг datetime з рядка"""
-        if not dt_str:
-            return None
-        try:
-            return datetime.fromisoformat(dt_str.replace('Z', '+00:00'))
-        except (ValueError, AttributeError):
-            return None
+    @staticmethod
+    def _calculate_duration(departure: datetime, arrival: datetime) -> Optional[int]:
+        """Розрахунок тривалості рейсу в хвилинах"""
+        if departure and arrival:
+            return int((arrival - departure).total_seconds() / 60)
+        return None
 
 
 class CrewMemberMapper(BaseMapper):
-    """Маппер для членів екіпажу"""
+    """Мапер для членів екіпажу"""
 
-    def to_dto(self, entity: Any) -> CrewMemberDTO | None:
-        """Конвертація з SQLAlchemy entity в CrewMemberDTO"""
-        if not entity:
-            return None
-
-        return CrewMemberDTO(
-            id=entity.id,
-            employee_id=entity.employee_id,
-            first_name=entity.first_name,
-            last_name=entity.last_name,
-            position_id=entity.position_id,
-            position_name=getattr(entity, 'position_name', None),
-            experience_years=entity.experience_years,
-            certification_level=entity.certification_level,
-            is_available=entity.is_available,
-            phone=entity.phone,
-            email=entity.email,
-            created_at=entity.created_at,
-            updated_at=entity.updated_at
-        )
-
-    def to_entity(self, dto: CrewMemberDTO) -> Dict[str, Any]:
-        """Конвертація CrewMemberDTO в дані для entity"""
-        return {
-            'employee_id': dto.employee_id,
-            'first_name': dto.first_name,
-            'last_name': dto.last_name,
-            'position_id': dto.position_id,
-            'experience_years': dto.experience_years,
-            'certification_level': dto.certification_level,
-            'is_available': dto.is_available,
-            'phone': dto.phone,
-            'email': dto.email
-        }
-
-    def to_dict(self, dto: CrewMemberDTO) -> Dict[str, Any]:
-        """Конвертація CrewMemberDTO в словник"""
-        return {
-            'id': dto.id,
-            'employee_id': dto.employee_id,
-            'first_name': dto.first_name,
-            'last_name': dto.last_name,
-            'position_id': dto.position_id,
-            'position_name': dto.position_name,
-            'experience_years': dto.experience_years,
-            'certification_level': dto.certification_level,
-            'is_available': dto.is_available,
-            'phone': dto.phone,
-            'email': dto.email,
-            'created_at': dto.created_at.isoformat() if dto.created_at else None,
-            'updated_at': dto.updated_at.isoformat() if dto.updated_at else None
-        }
-
-    def from_dict(self, data: Dict[str, Any]) -> CrewMemberDTO:
-        """Створення CrewMemberDTO зі словника"""
-        return CrewMemberDTO(
+    @staticmethod
+    def from_db_row(row: tuple, columns: List[str]) -> CrewMember:
+        """Перетворення рядка з БД в модель CrewMember"""
+        data = dict(zip(columns, row))
+        return CrewMember(
             id=data.get('id'),
-            employee_id=data.get('employee_id', ''),
-            first_name=data.get('first_name', ''),
-            last_name=data.get('last_name', ''),
-            position_id=data.get('position_id', 0),
-            position_name=data.get('position_name'),
+            employee_id=data.get('employee_id'),
+            first_name=data.get('first_name'),
+            last_name=data.get('last_name'),
+            position_id=data.get('position_id'),
             experience_years=data.get('experience_years', 0),
             certification_level=data.get('certification_level', 'JUNIOR'),
             is_available=data.get('is_available', True),
             phone=data.get('phone'),
             email=data.get('email'),
-            created_at=self._parse_datetime(data.get('created_at')),
-            updated_at=self._parse_datetime(data.get('updated_at'))
+            created_at=CrewMemberMapper.timestamp_to_datetime(data.get('created_at')),
+            updated_at=CrewMemberMapper.timestamp_to_datetime(data.get('updated_at'))
         )
 
-    def to_list_dto(self, entities: List[Any]) -> List[CrewMemberDTO]:
-        """Конвертація списку entities в список DTO"""
-        return [self.to_dto(entity) for entity in entities if entity]
+    @staticmethod
+    def to_dict(crew_member: CrewMember) -> Dict[str, Any]:
+        """Перетворення моделі CrewMember в словник"""
+        return {
+            'id': crew_member.id,
+            'employee_id': crew_member.employee_id,
+            'first_name': crew_member.first_name,
+            'last_name': crew_member.last_name,
+            'position_id': crew_member.position_id,
+            'experience_years': crew_member.experience_years,
+            'certification_level': crew_member.certification_level,
+            'is_available': crew_member.is_available,
+            'phone': crew_member.phone,
+            'email': crew_member.email,
+            'created_at': crew_member.created_at.isoformat() if crew_member.created_at else None,
+            'updated_at': crew_member.updated_at.isoformat() if crew_member.updated_at else None,
+            'full_name': f"{crew_member.first_name} {crew_member.last_name}",
+            'experience_level': CrewMemberMapper._get_experience_level(crew_member.experience_years)
+        }
 
-    def _parse_datetime(self, dt_str: str) -> Optional[datetime]:
-        """Парсинг datetime з рядка"""
-        if not dt_str:
-            return None
-        try:
-            return datetime.fromisoformat(dt_str.replace('Z', '+00:00'))
-        except (ValueError, AttributeError):
-            return None
+    @staticmethod
+    def _get_experience_level(years: int) -> str:
+        """Визначення рівня досвіду"""
+        if years < 2:
+            return 'Новачок'
+        elif years < 5:
+            return 'Досвідчений'
+        elif years < 10:
+            return 'Експерт'
+        else:
+            return 'Ветеран'
+
+
+class CrewPositionMapper(BaseMapper):
+    """Мапер для посад екіпажу"""
+
+    @staticmethod
+    def from_db_row(row: tuple, columns: List[str]) -> CrewPosition:
+        """Перетворення рядка з БД в модель CrewPosition"""
+        data = dict(zip(columns, row))
+        return CrewPosition(
+            id=data.get('id'),
+            position_name=data.get('position_name'),
+            description=data.get('description'),
+            is_required=data.get('is_required', True),
+            created_at=CrewPositionMapper.timestamp_to_datetime(data.get('created_at'))
+        )
+
+    @staticmethod
+    def to_dict(position: CrewPosition) -> Dict[str, Any]:
+        """Перетворення моделі CrewPosition в словник"""
+        return {
+            'id': position.id,
+            'position_name': position.position_name,
+            'description': position.description,
+            'is_required': position.is_required,
+            'created_at': position.created_at.isoformat() if position.created_at else None,
+            'display_name': CrewPositionMapper._get_display_name(position.position_name)
+        }
+
+    @staticmethod
+    def _get_display_name(position_name: str) -> str:
+        """Отримання відображуваної назви посади"""
+        names = {
+            'PILOT': 'Пілот',
+            'CO_PILOT': 'Другий пілот',
+            'NAVIGATOR': 'Штурман',
+            'RADIO_OPERATOR': 'Радист',
+            'FLIGHT_ATTENDANT': 'Бортпровідник',
+            'FLIGHT_ENGINEER': 'Бортінженер'
+        }
+        return names.get(position_name, position_name)
 
 
 class FlightAssignmentMapper(BaseMapper):
-    """Маппер для призначень екіпажу на рейси"""
+    """Мапер для призначень екіпажу"""
 
-    def to_dto(self, entity: Any) -> FlightAssignmentDTO | None:
-        """Конвертація з SQLAlchemy entity в FlightAssignmentDTO"""
-        if not entity:
-            return None
-
-        return FlightAssignmentDTO(
-            id=entity.id,
-            flight_id=entity.flight_id,
-            crew_member_id=entity.crew_member_id,
-            assigned_by=entity.assigned_by,
-            assigned_at=entity.assigned_at,
-            status=entity.status,
-            notes=entity.notes,
-            flight_number=getattr(entity, 'flight_number', None),
-            crew_member_name=getattr(entity, 'crew_member_name', None),
-            position_name=getattr(entity, 'position_name', None),
-            assigned_by_name=getattr(entity, 'assigned_by_name', None)
-        )
-
-    def to_entity(self, dto: FlightAssignmentDTO) -> Dict[str, Any]:
-        """Конвертація FlightAssignmentDTO в дані для entity"""
-        return {
-            'flight_id': dto.flight_id,
-            'crew_member_id': dto.crew_member_id,
-            'assigned_by': dto.assigned_by,
-            'status': dto.status,
-            'notes': dto.notes
-        }
-
-    def to_dict(self, dto: FlightAssignmentDTO) -> Dict[str, Any]:
-        """Конвертація FlightAssignmentDTO в словник"""
-        return {
-            'id': dto.id,
-            'flight_id': dto.flight_id,
-            'crew_member_id': dto.crew_member_id,
-            'assigned_by': dto.assigned_by,
-            'assigned_at': dto.assigned_at.isoformat() if dto.assigned_at else None,
-            'status': dto.status,
-            'notes': dto.notes,
-            'flight_number': dto.flight_number,
-            'crew_member_name': dto.crew_member_name,
-            'position_name': dto.position_name,
-            'assigned_by_name': dto.assigned_by_name
-        }
-
-    def from_dict(self, data: Dict[str, Any]) -> FlightAssignmentDTO:
-        """Створення FlightAssignmentDTO зі словника"""
-        return FlightAssignmentDTO(
+    @staticmethod
+    def from_db_row(row: tuple, columns: List[str]) -> FlightAssignment:
+        """Перетворення рядка з БД в модель FlightAssignment"""
+        data = dict(zip(columns, row))
+        return FlightAssignment(
             id=data.get('id'),
-            flight_id=data.get('flight_id', 0),
-            crew_member_id=data.get('crew_member_id', 0),
-            assigned_by=data.get('assigned_by', 0),
-            assigned_at=self._parse_datetime(data.get('assigned_at')),
+            flight_id=data.get('flight_id'),
+            crew_member_id=data.get('crew_member_id'),
+            assigned_by=data.get('assigned_by'),
+            assigned_at=FlightAssignmentMapper.timestamp_to_datetime(data.get('assigned_at')),
             status=data.get('status', 'ASSIGNED'),
-            notes=data.get('notes'),
-            flight_number=data.get('flight_number'),
-            crew_member_name=data.get('crew_member_name'),
-            position_name=data.get('position_name'),
-            assigned_by_name=data.get('assigned_by_name')
+            notes=data.get('notes')
         )
 
-    def to_list_dto(self, entities: List[Any]) -> List[FlightAssignmentDTO]:
-        """Конвертація списку entities в список DTO"""
-        return [self.to_dto(entity) for entity in entities if entity]
+    @staticmethod
+    def to_dict(assignment: FlightAssignment) -> Dict[str, Any]:
+        """Перетворення моделі FlightAssignment в словник"""
+        return {
+            'id': assignment.id,
+            'flight_id': assignment.flight_id,
+            'crew_member_id': assignment.crew_member_id,
+            'assigned_by': assignment.assigned_by,
+            'assigned_at': assignment.assigned_at.isoformat() if assignment.assigned_at else None,
+            'status': assignment.status,
+            'notes': assignment.notes,
+            'status_display': FlightAssignmentMapper._get_status_display(assignment.status)
+        }
 
-    def _parse_datetime(self, dt_str: str) -> Optional[datetime]:
-        """Парсинг datetime з рядка"""
-        if not dt_str:
-            return None
+    @staticmethod
+    def _get_status_display(status: str) -> str:
+        """Отримання відображуваного статусу"""
+        statuses = {
+            'ASSIGNED': 'Призначено',
+            'CONFIRMED': 'Підтверджено',
+            'CANCELLED': 'Скасовано'
+        }
+        return statuses.get(status, status)
+
+
+class OperationLogMapper(BaseMapper):
+    """Мапер для логів операцій"""
+
+    @staticmethod
+    def from_db_row(row: tuple, columns: List[str]) -> OperationLog:
+        """Перетворення рядка з БД в модель OperationLog"""
+        data = dict(zip(columns, row))
+        return OperationLog(
+            id=data.get('id'),
+            user_id=data.get('user_id'),
+            operation_type=data.get('operation_type'),
+            table_name=data.get('table_name'),
+            record_id=data.get('record_id'),
+            old_values=data.get('old_values'),
+            new_values=data.get('new_values'),
+            description=data.get('description'),
+            ip_address=data.get('ip_address'),
+            user_agent=data.get('user_agent'),
+            created_at=OperationLogMapper.timestamp_to_datetime(data.get('created_at'))
+        )
+
+    @staticmethod
+    def to_dict(log: OperationLog) -> Dict[str, Any]:
+        """Перетворення моделі OperationLog в словник"""
+        return {
+            'id': log.id,
+            'user_id': log.user_id,
+            'operation_type': log.operation_type,
+            'table_name': log.table_name,
+            'record_id': log.record_id,
+            'old_values': log.old_values,
+            'new_values': log.new_values,
+            'description': log.description,
+            'ip_address': log.ip_address,
+            'user_agent': log.user_agent,
+            'created_at': log.created_at.isoformat() if log.created_at else None,
+            'operation_display': OperationLogMapper._get_operation_display(log.operation_type)
+        }
+
+    @staticmethod
+    def _get_operation_display(operation_type: str) -> str:
+        """Отримання відображуваного типу операції"""
+        operations = {
+            'CREATE': 'Створення',
+            'UPDATE': 'Оновлення',
+            'DELETE': 'Видалення',
+            'SELECT': 'Перегляд',
+            'LOGIN': 'Вхід',
+            'LOGOUT': 'Вихід'
+        }
+        return operations.get(operation_type, operation_type)
+
+
+class GenericMapper:
+    """Універсальний мапер для довільних об'єктів"""
+
+    @staticmethod
+    def map_list(items: List[Any], mapper_func: callable) -> List[Dict[str, Any]]:
+        """Перетворення списку об'єктів"""
+        return [mapper_func(item) for item in items if item]
+
+    @staticmethod
+    def map_dict_to_object(data: Dict[str, Any], target_class: Type[T]) -> T:
+        """Перетворення словника в об'єкт"""
         try:
-            return datetime.fromisoformat(dt_str.replace('Z', '+00:00'))
-        except (ValueError, AttributeError):
-            return None
+            return target_class(**data)
+        except TypeError as e:
+            # Фільтруємо тільки відомі поля
+            import inspect
+            sig = inspect.signature(target_class.__init__)
+            filtered_data = {k: v for k, v in data.items()
+                             if k in sig.parameters and k != 'self'}
+            return target_class(**filtered_data)
+
+    @staticmethod
+    def merge_dicts(*dicts: Dict[str, Any]) -> Dict[str, Any]:
+        """Об'єднання декількох словників"""
+        result = {}
+        for d in dicts:
+            if d:
+                result.update(d)
+        return result
+
+    @staticmethod
+    def filter_none_values(data: Dict[str, Any]) -> Dict[str, Any]:
+        """Видалення None значень зі словника"""
+        return {k: v for k, v in data.items() if v is not None}
+
+
+# Фабрика маперів
+class MapperFactory:
+    """Фабрика для створення маперів"""
+
+    _mappers = {
+        'user': UserMapper,
+        'flight': FlightMapper,
+        'crew_member': CrewMemberMapper,
+        'crew_position': CrewPositionMapper,
+        'flight_assignment': FlightAssignmentMapper,
+        'operation_log': OperationLogMapper
+    }
+
+    @classmethod
+    def get_mapper(cls, entity_type: str):
+        """Отримання мапера за типом сутності"""
+        return cls._mappers.get(entity_type.lower())
+
+    @classmethod
+    def register_mapper(cls, entity_type: str, mapper_class):
+        """Реєстрація нового мапера"""
+        cls._mappers[entity_type.lower()] = mapper_class

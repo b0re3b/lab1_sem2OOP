@@ -1,328 +1,317 @@
 import jwt
+import json
 import requests
-from datetime import datetime, timedelta, timezone
-from typing import Optional, Dict, List, Any
+from datetime import datetime, timedelta
+from typing import Dict, Any, Optional, List, Union
 from functools import wraps
-from fastapi import HTTPException, status, Depends
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-import logging
-import time
-from urllib.parse import urljoin
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import rsa
+import base64
+import hashlib
+import secrets
 
-# Налаштування логування
-logger = logging.getLogger(__name__)
 
-# Security схема для FastAPI
-security = HTTPBearer()
+class JWTError(Exception):
+    """Кастомний клас для помилок JWT"""
+    pass
+
+
+class TokenExpiredError(JWTError):
+    """Помилка коли токен прострочений"""
+    pass
+
+
+class InvalidTokenError(JWTError):
+    """Помилка коли токен недійсний"""
+    pass
 
 
 class JWTConfig:
-    """Конфігурація JWT"""
+    """Конфігурація для JWT"""
 
     def __init__(self):
-        # Keycloak налаштування (зазвичай завантажуються з config/keycloak.yaml)
-        self.KEYCLOAK_SERVER_URL = "http://localhost:8080"
-        self.KEYCLOAK_REALM = "airline-system"
-        self.KEYCLOAK_CLIENT_ID = "airline-backend"
-        self.KEYCLOAK_CLIENT_SECRET = "client-secret"
-
-        # JWT налаштування
-        self.JWT_ALGORITHM = "RS256"
-        self.JWT_ACCESS_TOKEN_EXPIRE_MINUTES = 30
-        self.JWT_REFRESH_TOKEN_EXPIRE_DAYS = 7
-
-        # Внутрішні JWT налаштування (для власних токенів)
-        self.INTERNAL_JWT_SECRET_KEY = "internal-secret-key"
-        self.INTERNAL_JWT_ALGORITHM = "HS256"
+        # Ці значення зазвичай беруться з config/settings.py
+        self.SECRET_KEY = "your-secret-key-should-be-from-config"
+        self.ALGORITHM = "HS256"
+        self.ACCESS_TOKEN_EXPIRE_MINUTES = 30
+        self.REFRESH_TOKEN_EXPIRE_DAYS = 7
+        self.ISSUER = "airline-system"
+        self.AUDIENCE = "airline-app"
 
 
 class JWTManager:
-    """Менеджер для роботи з JWT токенами та Keycloak"""
+    """Менеджер для роботи з JWT токенами"""
 
     def __init__(self, config: JWTConfig = None):
         self.config = config or JWTConfig()
-        self._public_key = None
-        self._public_key_cache_time = 0
-        self._public_key_cache_duration = 3600  # 1 година
+        self._public_keys_cache = {}
+        self._cache_expiry = None
 
-    def _get_keycloak_public_key(self) -> str:
-        """Отримання публічного ключа Keycloak з кешуванням"""
-        current_time = time.time()
+    def create_access_token(self, user_data: Dict[str, Any], expires_delta: Optional[timedelta] = None) -> str:
+        """Створення access токена"""
+        if expires_delta:
+            expire = datetime.utcnow() + expires_delta
+        else:
+            expire = datetime.utcnow() + timedelta(minutes=self.config.ACCESS_TOKEN_EXPIRE_MINUTES)
 
-        # Перевірка кешу
-        if (self._public_key and
-                current_time - self._public_key_cache_time < self._public_key_cache_duration):
-            return self._public_key
+        payload = {
+            "sub": str(user_data.get("id")),  # Subject (user ID)
+            "username": user_data.get("username"),
+            "email": user_data.get("email"),
+            "role": user_data.get("role"),
+            "keycloak_id": user_data.get("keycloak_id"),
+            "exp": expire,  # Expiration time
+            "iat": datetime.utcnow(),  # Issued at
+            "iss": self.config.ISSUER,  # Issuer
+            "aud": self.config.AUDIENCE,  # Audience
+            "type": "access"
+        }
 
         try:
-            # URL для отримання публічного ключа Keycloak
-            certs_url = urljoin(
-                self.config.KEYCLOAK_SERVER_URL,
-                f"/auth/realms/{self.config.KEYCLOAK_REALM}/protocol/openid_connect/certs"
+            return jwt.encode(payload, self.config.SECRET_KEY, algorithm=self.config.ALGORITHM)
+        except Exception as e:
+            raise JWTError(f"Помилка створення токена: {str(e)}")
+
+    def create_refresh_token(self, user_id: Union[str, int]) -> str:
+        """Створення refresh токена"""
+        expire = datetime.utcnow() + timedelta(days=self.config.REFRESH_TOKEN_EXPIRE_DAYS)
+
+        payload = {
+            "sub": str(user_id),
+            "exp": expire,
+            "iat": datetime.utcnow(),
+            "iss": self.config.ISSUER,
+            "type": "refresh",
+            "jti": secrets.token_urlsafe(32)  # JWT ID для унікальності
+        }
+
+        try:
+            return jwt.encode(payload, self.config.SECRET_KEY, algorithm=self.config.ALGORITHM)
+        except Exception as e:
+            raise JWTError(f"Помилка створення refresh токена: {str(e)}")
+
+    def decode_token(self, token: str, verify_exp: bool = True) -> Dict[str, Any]:
+        """Декодування та валідація токена"""
+        try:
+            # Спочатку декодуємо без верифікації щоб отримати header
+            unverified_header = jwt.get_unverified_header(token)
+
+            options = {
+                "verify_signature": True,
+                "verify_exp": verify_exp,
+                "verify_iat": True,
+                "verify_iss": True,
+                "verify_aud": True
+            }
+
+            payload = jwt.decode(
+                token,
+                self.config.SECRET_KEY,
+                algorithms=[self.config.ALGORITHM],
+                issuer=self.config.ISSUER,
+                audience=self.config.AUDIENCE,
+                options=options
             )
 
+            return payload
+
+        except jwt.ExpiredSignatureError:
+            raise TokenExpiredError("Токен прострочений")
+        except jwt.InvalidTokenError as e:
+            raise InvalidTokenError(f"Недійсний токен: {str(e)}")
+        except Exception as e:
+            raise JWTError(f"Помилка декодування токена: {str(e)}")
+
+    def refresh_access_token(self, refresh_token: str, user_data: Dict[str, Any]) -> str:
+        """Оновлення access токена за допомогою refresh токена"""
+        try:
+            # Перевіряємо refresh токен
+            payload = self.decode_token(refresh_token)
+
+            if payload.get("type") != "refresh":
+                raise InvalidTokenError("Це не refresh токен")
+
+            # Створюємо новий access токен
+            return self.create_access_token(user_data)
+
+        except (TokenExpiredError, InvalidTokenError):
+            raise
+        except Exception as e:
+            raise JWTError(f"Помилка оновлення токена: {str(e)}")
+
+    def get_user_from_token(self, token: str) -> Dict[str, Any]:
+        """Отримання даних користувача з токена"""
+        payload = self.decode_token(token)
+
+        return {
+            "id": payload.get("sub"),
+            "username": payload.get("username"),
+            "email": payload.get("email"),
+            "role": payload.get("role"),
+            "keycloak_id": payload.get("keycloak_id")
+        }
+
+    def is_token_valid(self, token: str) -> bool:
+        """Перевірка чи токен дійсний"""
+        try:
+            self.decode_token(token)
+            return True
+        except (TokenExpiredError, InvalidTokenError, JWTError):
+            return False
+
+    def get_token_expiry(self, token: str) -> Optional[datetime]:
+        """Отримання часу закінчення дії токена"""
+        try:
+            payload = self.decode_token(token, verify_exp=False)
+            exp = payload.get("exp")
+            if exp:
+                return datetime.utcfromtimestamp(exp)
+            return None
+        except Exception:
+            return None
+
+
+class KeycloakJWTManager:
+    """Менеджер для роботи з JWT токенами від Keycloak"""
+
+    def __init__(self, keycloak_config: Dict[str, Any]):
+        self.keycloak_config = keycloak_config
+        self.server_url = keycloak_config.get("server_url")
+        self.realm = keycloak_config.get("realm")
+        self.client_id = keycloak_config.get("client_id")
+        self._public_keys = {}
+        self._keys_last_updated = None
+
+    def get_public_keys(self) -> Dict[str, Any]:
+        """Отримання публічних ключів від Keycloak"""
+        # Кешуємо ключі на 1 годину
+        if (self._keys_last_updated and
+                datetime.now() - self._keys_last_updated < timedelta(hours=1)):
+            return self._public_keys
+
+        try:
+            certs_url = f"{self.server_url}/realms/{self.realm}/protocol/openid_connect/certs"
             response = requests.get(certs_url, timeout=10)
             response.raise_for_status()
 
             keys_data = response.json()
+            self._public_keys = {}
 
-            # Знаходимо ключ для підпису (використовується для RS256)
-            for key in keys_data.get('keys', []):
-                if key.get('use') == 'sig' and key.get('alg') == 'RS256':
-                    # Конвертуємо JWK в PEM формат
-                    public_key_pem = self._jwk_to_pem(key)
+            for key in keys_data.get("keys", []):
+                kid = key.get("kid")
+                if kid:
+                    self._public_keys[kid] = key
 
-                    # Кешуємо ключ
-                    self._public_key = public_key_pem
-                    self._public_key_cache_time = current_time
-
-                    return public_key_pem
-
-            raise ValueError("Не знайдено відповідний ключ для підпису")
+            self._keys_last_updated = datetime.now()
+            return self._public_keys
 
         except Exception as e:
-            logger.error(f"Помилка отримання публічного ключа Keycloak: {e}")
-            raise HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail="Сервіс автентифікації недоступний"
-            )
+            raise JWTError(f"Помилка отримання публічних ключів Keycloak: {str(e)}")
 
-    def _jwk_to_pem(self, jwk: Dict) -> str:
-        """Конвертація JWK в PEM формат"""
+    def _jwk_to_public_key(self, jwk_data: Dict[str, Any]):
+        """Конвертація JWK в публічний ключ"""
         try:
-            from cryptography.hazmat.primitives.asymmetric.rsa import RSAPublicNumbers
-            from cryptography.hazmat.primitives import serialization
-            import base64
+            n = base64.urlsafe_b64decode(jwk_data['n'] + '==')
+            e = base64.urlsafe_b64decode(jwk_data['e'] + '==')
 
-            # Декодуємо компоненти RSA ключа
-            n = int.from_bytes(
-                base64.urlsafe_b64decode(jwk['n'] + '=='),
-                byteorder='big'
-            )
-            e = int.from_bytes(
-                base64.urlsafe_b64decode(jwk['e'] + '=='),
-                byteorder='big'
+            # Створюємо RSA публічний ключ
+            from cryptography.hazmat.primitives.asymmetric.rsa import RSAPublicNumbers, RSAPublicKey
+
+            public_numbers = RSAPublicNumbers(
+                int.from_bytes(e, 'big'),
+                int.from_bytes(n, 'big')
             )
 
-            # Створюємо публічний ключ
-            public_numbers = RSAPublicNumbers(e, n)
-            public_key = public_numbers.public_key()
-
-            # Конвертуємо в PEM
-            pem = public_key.serialize(
-                encoding=serialization.Encoding.PEM,
-                format=serialization.PublicFormat.SubjectPublicKeyInfo
-            )
-
-            return pem.decode('utf-8')
+            return public_numbers.public_key()
 
         except Exception as e:
-            logger.error(f"Помилка конвертації JWK в PEM: {e}")
-            raise ValueError("Неможливо конвертувати ключ")
+            raise JWTError(f"Помилка конвертації JWK: {str(e)}")
 
-    def verify_keycloak_token(self, token: str) -> Dict[str, Any]:
-        """Верифікація Keycloak JWT токена"""
+    def decode_keycloak_token(self, token: str) -> Dict[str, Any]:
+        """Декодування токена від Keycloak"""
         try:
-            # Отримуємо публічний ключ
-            public_key = self._get_keycloak_public_key()
+            # Отримуємо header токена
+            unverified_header = jwt.get_unverified_header(token)
+            kid = unverified_header.get("kid")
 
-            # Декодуємо та верифікуємо токен
-            decoded_token = jwt.decode(
+            if not kid:
+                raise InvalidTokenError("Відсутній kid в header токена")
+
+            # Отримуємо публічні ключі
+            public_keys = self.get_public_keys()
+
+            if kid not in public_keys:
+                raise InvalidTokenError(f"Невідомий kid: {kid}")
+
+            # Конвертуємо JWK в публічний ключ
+            key_data = public_keys[kid]
+            public_key = self._jwk_to_public_key(key_data)
+
+            # Декодуємо токен
+            payload = jwt.decode(
                 token,
                 public_key,
-                algorithms=[self.config.JWT_ALGORITHM],
-                audience=self.config.KEYCLOAK_CLIENT_ID,
+                algorithms=["RS256"],
+                audience=self.client_id,
                 options={"verify_exp": True}
             )
 
-            return decoded_token
-
-        except jwt.ExpiredSignatureError:
-            logger.warning("JWT токен прострочений")
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Токен прострочений"
-            )
-        except jwt.InvalidTokenError as e:
-            logger.warning(f"Недійсний JWT токен: {e}")
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Недійсний токен"
-            )
-        except Exception as e:
-            logger.error(f"Помилка верифікації токена: {e}")
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Помилка верифікації токена"
-            )
-
-    def create_internal_token(self, user_data: Dict[str, Any],
-                              expires_delta: Optional[timedelta] = None) -> str:
-        """Створення внутрішнього JWT токена"""
-        if expires_delta:
-            expire = datetime.now(timezone.utc) + expires_delta
-        else:
-            expire = datetime.now(timezone.utc) + timedelta(
-                minutes=self.config.JWT_ACCESS_TOKEN_EXPIRE_MINUTES
-            )
-
-        to_encode = user_data.copy()
-        to_encode.update({"exp": expire, "iat": datetime.now(timezone.utc)})
-
-        encoded_jwt = jwt.encode(
-            to_encode,
-            self.config.INTERNAL_JWT_SECRET_KEY,
-            algorithm=self.config.INTERNAL_JWT_ALGORITHM
-        )
-
-        return encoded_jwt
-
-    def verify_internal_token(self, token: str) -> Dict[str, Any]:
-        """Верифікація внутрішнього JWT токена"""
-        try:
-            payload = jwt.decode(
-                token,
-                self.config.INTERNAL_JWT_SECRET_KEY,
-                algorithms=[self.config.INTERNAL_JWT_ALGORITHM]
-            )
             return payload
+
         except jwt.ExpiredSignatureError:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Токен прострочений"
-            )
-        except jwt.InvalidTokenError:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Недійсний токен"
-            )
+            raise TokenExpiredError("Keycloak токен прострочений")
+        except jwt.InvalidTokenError as e:
+            raise InvalidTokenError(f"Недійсний Keycloak токен: {str(e)}")
+        except Exception as e:
+            raise JWTError(f"Помилка декодування Keycloak токена: {str(e)}")
 
+    def get_user_info_from_keycloak_token(self, token: str) -> Dict[str, Any]:
+        """Отримання інформації про користувача з Keycloak токена"""
+        payload = self.decode_keycloak_token(token)
 
-# Глобальний екземпляр менеджера
-jwt_manager = JWTManager()
-
-
-def create_access_token(data: Dict[str, Any],
-                        expires_delta: Optional[timedelta] = None) -> str:
-    """Створення access токена"""
-    return jwt_manager.create_internal_token(data, expires_delta)
-
-
-def verify_token(token: str, keycloak: bool = True) -> Dict[str, Any]:
-    """
-    Верифікація токена
-
-    Args:
-        token: JWT токен
-        keycloak: True для Keycloak токенів, False для внутрішніх
-    """
-    if keycloak:
-        return jwt_manager.verify_keycloak_token(token)
-    else:
-        return jwt_manager.verify_internal_token(token)
-
-
-def extract_user_roles(token_payload: Dict[str, Any]) -> List[str]:
-    """Витягування ролей користувача з токена"""
-    roles = []
-
-    # Keycloak зберігає ролі в різних частинах токена
-    # Ролі реалму
-    realm_access = token_payload.get('realm_access', {})
-    realm_roles = realm_access.get('roles', [])
-    roles.extend(realm_roles)
-
-    # Ролі клієнта
-    resource_access = token_payload.get('resource_access', {})
-    client_access = resource_access.get(jwt_manager.config.KEYCLOAK_CLIENT_ID, {})
-    client_roles = client_access.get('roles', [])
-    roles.extend(client_roles)
-
-    # Фільтруємо системні ролі Keycloak
-    filtered_roles = [
-        role for role in roles
-        if not role.startswith('uma_') and role not in ['offline_access']
-    ]
-
-    return filtered_roles
-
-
-def is_token_expired(token_payload: Dict[str, Any]) -> bool:
-    """Перевірка чи токен прострочений"""
-    exp_timestamp = token_payload.get('exp')
-    if not exp_timestamp:
-        return True
-
-    current_timestamp = datetime.now(timezone.utc).timestamp()
-    return current_timestamp >= exp_timestamp
-
-
-def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security)) -> Dict[str, Any]:
-    """
-    Dependency для отримання поточного користувача з JWT токена
-    Використовується в FastAPI endpoints
-    """
-    try:
-        # Витягуємо токен з Authorization header
-        token = credentials.credentials
-
-        # Спочатку пробуємо як Keycloak токен
-        try:
-            payload = verify_token(token, keycloak=True)
-        except HTTPException:
-            # Якщо не вийшло, пробуємо як внутрішній токен
-            payload = verify_token(token, keycloak=False)
-
-        # Витягуємо інформацію про користувача
-        user_info = {
-            'user_id': payload.get('sub'),
-            'username': payload.get('preferred_username') or payload.get('username'),
-            'email': payload.get('email'),
-            'roles': extract_user_roles(payload),
-            'token_payload': payload
+        return {
+            "keycloak_id": payload.get("sub"),
+            "username": payload.get("preferred_username"),
+            "email": payload.get("email"),
+            "first_name": payload.get("given_name"),
+            "last_name": payload.get("family_name"),
+            "roles": payload.get("realm_access", {}).get("roles", []),
+            "client_roles": payload.get("resource_access", {}).get(self.client_id, {}).get("roles", [])
         }
 
-        return user_info
 
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Помилка отримання поточного користувача: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Не вдалося автентифікувати користувача"
-        )
-
-
-def require_roles(required_roles: List[str]):
-    """
-    Декоратор для перевірки ролей користувача
-
-    Usage:
-        @require_roles(['admin', 'dispatcher'])
-        def some_endpoint(current_user: dict = Depends(get_current_user)):
-            ...
-    """
+def jwt_required(optional: bool = False):
+    """Декоратор для перевірки JWT токена"""
 
     def decorator(func):
         @wraps(func)
         def wrapper(*args, **kwargs):
-            # Отримуємо current_user з kwargs (має бути передано через Depends)
-            current_user = kwargs.get('current_user')
-            if not current_user:
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail="Немає доступу до ресурсу"
-                )
+            from flask import request, g
 
-            user_roles = current_user.get('roles', [])
+            token = None
+            auth_header = request.headers.get('Authorization')
 
-            # Перевіряємо чи є хоча б одна з необхідних ролей
-            if not any(role in user_roles for role in required_roles):
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail=f"Необхідні ролі: {', '.join(required_roles)}"
-                )
+            if auth_header:
+                try:
+                    token = auth_header.split(' ')[1]  # Bearer <token>
+                except IndexError:
+                    if not optional:
+                        return {'error': 'Неправильний формат токена'}, 401
+
+            if not token and not optional:
+                return {'error': 'Токен відсутній'}, 401
+
+            if token:
+                jwt_manager = JWTManager()
+                try:
+                    user_data = jwt_manager.get_user_from_token(token)
+                    g.current_user = user_data
+                except (TokenExpiredError, InvalidTokenError, JWTError) as e:
+                    if not optional:
+                        return {'error': str(e)}, 401
+                    g.current_user = None
+            else:
+                g.current_user = None
 
             return func(*args, **kwargs)
 
@@ -331,61 +320,24 @@ def require_roles(required_roles: List[str]):
     return decorator
 
 
-def require_admin(func):
-    """Декоратор для перевірки ролі адміністратора"""
-    return require_roles(['admin'])(func)
+def role_required(required_role: str):
+    """Декоратор для перевірки ролі користувача"""
 
+    def decorator(func):
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            from flask import g
 
-def require_dispatcher(func):
-    """Декоратор для перевірки ролі диспетчера"""
-    return require_roles(['dispatcher'])(func)
+            if not hasattr(g, 'current_user') or not g.current_user:
+                return {'error': 'Потрібна авторизація'}, 401
 
+            user_role = g.current_user.get('role')
+            if user_role != required_role:
+                return {'error': f'Потрібна роль: {required_role}'}, 403
 
-# Utility функції для роботи з токенами
-def decode_token_without_verification(token: str) -> Dict[str, Any]:
-    """Декодування токена без верифікації (для дебагу)"""
-    try:
-        return jwt.decode(token, options={"verify_signature": False})
-    except Exception as e:
-        logger.error(f"Помилка декодування токена: {e}")
-        return {}
+            return func(*args, **kwargs)
 
+        return wrapper
 
-def get_token_claims(token: str) -> Dict[str, Any]:
-    """Отримання claims з токена без повної верифікації"""
-    return decode_token_without_verification(token)
+    return decorator
 
-
-def refresh_token_if_needed(token: str, threshold_minutes: int = 5) -> Optional[str]:
-    """
-    Оновлення токена, якщо він скоро прострочиться
-
-    Args:
-        token: Поточний токен
-        threshold_minutes: За скільки хвилин до закінчення оновлювати
-
-    Returns:
-        Новий токен або None, якщо оновлення не потрібне
-    """
-    try:
-        payload = decode_token_without_verification(token)
-        exp_timestamp = payload.get('exp')
-
-        if not exp_timestamp:
-            return None
-
-        current_time = datetime.now(timezone.utc).timestamp()
-        time_until_expiry = exp_timestamp - current_time
-
-        # Якщо токен закінчиться менш ніж через threshold_minutes хвилин
-        if time_until_expiry < (threshold_minutes * 60):
-            # Тут можна реалізувати логіку оновлення токена через Keycloak
-            # Поки що повертаємо None
-            logger.info("Токен потребує оновлення")
-            return None
-
-        return None
-
-    except Exception as e:
-        logger.error(f"Помилка перевірки необхідності оновлення токена: {e}")
-        return None
