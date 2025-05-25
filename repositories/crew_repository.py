@@ -1,369 +1,194 @@
-import logging
-from datetime import datetime
 from typing import List, Optional, Dict, Any
-from sqlalchemy import and_, or_, func
-from sqlalchemy.exc import SQLAlchemyError, IntegrityError
-from sqlalchemy.orm import Session, joinedload
-from ..models.crew_member import CrewMember, CertificationLevel
-from ..models.crew_position import CrewPosition
-from ..models.flight import Flight
-from ..models.flight_assignment import FlightAssignment, AssignmentStatus
-
-logger = logging.getLogger(__name__)
+from datetime import datetime
+import psycopg2
+from psycopg2.extras import RealDictCursor
+from config.database import DatabaseConfig
+from config.logging_config import log_database_operation
+from models.crew_member import CrewMember
+from models.crew_position import CrewPosition
+from utils.validators import CrewValidator
 
 
 class CrewRepository:
-    """
-    Репозиторій для роботи з членами екіпажу
-    Реалізує специфічну логіку для управління екіпажем
-    """
-
     def __init__(self):
-        super().__init__(CrewMember)
+        self.table_name = "crew_members"
+        self.validator = CrewValidator()
+        self.db_manager = DatabaseConfig()
 
-    def create_crew_member(self, employee_id: str, first_name: str, last_name: str,
-                           position_id: int, experience_years: int = 0,
-                           certification_level: CertificationLevel = CertificationLevel.JUNIOR,
-                           phone: Optional[str] = None, email: Optional[str] = None) -> Optional[CrewMember]:
-        """
-        Створити нового члена екіпажу
-        """
+    @log_database_operation
+    def create_crew_member(self, crew_data: Dict[str, Any]) -> Optional[CrewMember]:
+        """Створення нового члена екіпажу"""
+        self.validator.validate_crew_member_data(crew_data)
+
+        query = """
+                INSERT INTO crew_members (employee_id, first_name, last_name, position_id,
+                                          experience_years, certification_level, is_available, phone, email)
+                VALUES (%(employee_id)s, %(first_name)s, %(last_name)s, %(position_id)s,
+                        %(experience_years)s, %(certification_level)s, %(is_available)s, %(phone)s, %(email)s)
+                RETURNING * \
+                """
+
         try:
-            crew_member = CrewMember(
-                employee_id=employee_id,
-                first_name=first_name,
-                last_name=last_name,
-                position_id=position_id,
-                experience_years=experience_years,
-                certification_level=certification_level,
-                phone=phone,
-                email=email,
-                is_available=True
-            )
+            with self.db_manager.get_connection() as conn:
+                with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+                    cursor.execute(query, crew_data)
+                    result = cursor.fetchone()
+                    conn.commit()
+                    return CrewMember(**dict(result)) if result else None
+        except psycopg2.Error as e:
+            raise Exception(f"Database error creating crew member: {e}")
 
-            self.db.add(crew_member)
-            self.db.commit()
-            self.db.refresh(crew_member)
+    @log_database_operation
+    def find_by_id(self, crew_id: int) -> Optional[CrewMember]:
+        """Пошук члена екіпажу за ID"""
+        query = """
+                SELECT cm.*, cp.position_name, cp.description as position_description
+                FROM crew_members cm
+                         JOIN crew_positions cp ON cm.position_id = cp.id
+                WHERE cm.id = %s \
+                """
 
-            logger.info(f"Created crew member {crew_member.employee_id}: {crew_member.full_name}")
-            return crew_member
-
-        except IntegrityError as e:
-            self.db.rollback()
-            logger.error(f"Integrity error creating crew member: {str(e)}")
-            return None
-        except SQLAlchemyError as e:
-            self.db.rollback()
-            logger.error(f"Error creating crew member: {str(e)}")
-            raise
-
-    def get_by_employee_id(self, employee_id: str) -> Optional[CrewMember]:
-        """
-        Отримати члена екіпажу за службовим номером
-        """
         try:
-            return self.db.query(CrewMember).options(
-                joinedload(CrewMember.position)
-            ).filter(CrewMember.employee_id == employee_id).first()
-        except SQLAlchemyError as e:
-            logger.error(f"Error getting crew member by employee_id {employee_id}: {str(e)}")
-            raise
+            with self.db_manager.get_connection() as conn:
+                with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+                    cursor.execute(query, (crew_id,))
+                    result = cursor.fetchone()
+                    return CrewMember(**dict(result)) if result else None
+        except psycopg2.Error as e:
+            raise Exception(f"Database error finding crew member by id: {e}")
 
-    def get_by_position(self, position_id: int, available_only: bool = True) -> List[CrewMember]:
-        """
-        Отримати всіх членів екіпажу за посадою
-        """
+    @log_database_operation
+    def find_by_employee_id(self, employee_id: str) -> Optional[CrewMember]:
+        """Пошук члена екіпажу за службовим номером"""
+        self.validator.validate_employee_id(employee_id)
+
+        query = """
+                SELECT cm.*, cp.position_name, cp.description as position_description
+                FROM crew_members cm
+                         JOIN crew_positions cp ON cm.position_id = cp.id
+                WHERE cm.employee_id = %s \
+                """
+
         try:
-            query = self.db.query(CrewMember).options(
-                joinedload(CrewMember.position)
-            ).filter(CrewMember.position_id == position_id)
+            with self.db_manager.get_connection() as conn:
+                with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+                    cursor.execute(query, (employee_id,))
+                    result = cursor.fetchone()
+                    return CrewMember(**dict(result)) if result else None
+        except psycopg2.Error as e:
+            raise Exception(f"Database error finding crew member by employee_id: {e}")
 
-            if available_only:
-                query = query.filter(CrewMember.is_available == True)
+    @log_database_operation
+    def find_available_by_position(self, position_id: int) -> List[CrewMember]:
+        """Пошук доступних членів екіпажу за посадою"""
+        query = """
+                SELECT cm.*, cp.position_name, cp.description as position_description
+                FROM crew_members cm
+                         JOIN crew_positions cp ON cm.position_id = cp.id
+                WHERE cm.position_id = %s \
+                  AND cm.is_available = TRUE
+                ORDER BY cm.certification_level DESC, cm.experience_years DESC \
+                """
 
-            return query.order_by(CrewMember.experience_years.desc()).all()
-        except SQLAlchemyError as e:
-            logger.error(f"Error getting crew members by position {position_id}: {str(e)}")
-            raise
-
-    def get_available_crew(self, departure_time: datetime, arrival_time: datetime,
-                           position_id: Optional[int] = None) -> List[CrewMember]:
-        """
-        Отримати доступних членів екіпажу на конкретний час
-        """
         try:
-            # Підзапит для знаходження зайнятих членів екіпажу
-            busy_crew_subquery = self.db.query(FlightAssignment.crew_member_id).join(Flight).filter(
-                and_(
-                    FlightAssignment.status == AssignmentStatus.ASSIGNED,
-                    or_(
-                        and_(Flight.departure_time <= departure_time, Flight.arrival_time >= departure_time),
-                        and_(Flight.departure_time <= arrival_time, Flight.arrival_time >= arrival_time),
-                        and_(Flight.departure_time >= departure_time, Flight.arrival_time <= arrival_time)
-                    )
-                )
-            ).subquery()
+            with self.db_manager.get_connection() as conn:
+                with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+                    cursor.execute(query, (position_id,))
+                    results = cursor.fetchall()
+                    return [CrewMember(**dict(row)) for row in results]
+        except psycopg2.Error as e:
+            raise Exception(f"Database error finding available crew by position: {e}")
 
-            query = self.db.query(CrewMember).options(
-                joinedload(CrewMember.position)
-            ).filter(
-                and_(
-                    CrewMember.is_available == True,
-                    ~CrewMember.id.in_(busy_crew_subquery)
-                )
-            )
+    @log_database_operation
+    def find_available_for_flight(self, departure_time: datetime, arrival_time: datetime) -> List[CrewMember]:
+        """Пошук доступних членів екіпажу для рейсу"""
+        query = """
+                SELECT DISTINCT cm.*, cp.position_name, cp.description as position_description
+                FROM crew_members cm
+                         JOIN crew_positions cp ON cm.position_id = cp.id
+                WHERE cm.is_available = TRUE
+                  AND cm.id NOT IN (SELECT fa.crew_member_id \
+                                    FROM flight_assignments fa \
+                                             JOIN flights f ON fa.flight_id = f.id \
+                                    WHERE fa.status = 'ASSIGNED' \
+                                      AND ( \
+                                        (f.departure_time <= %s AND f.arrival_time >= %s) \
+                                            OR (f.departure_time <= %s AND f.arrival_time >= %s) \
+                                            OR (f.departure_time >= %s AND f.arrival_time <= %s) \
+                                        ))
+                ORDER BY cp.position_name, cm.certification_level DESC, cm.experience_years DESC \
+                """
 
-            if position_id:
-                query = query.filter(CrewMember.position_id == position_id)
-
-            return query.order_by(CrewMember.certification_level.desc(),
-                                  CrewMember.experience_years.desc()).all()
-        except SQLAlchemyError as e:
-            logger.error(f"Error getting available crew: {str(e)}")
-            raise
-
-    def get_crew_by_certification(self, certification_level: CertificationLevel,
-                                  position_id: Optional[int] = None) -> List[CrewMember]:
-        """
-        Отримати членів екіпажу за рівнем сертифікації
-        """
         try:
-            query = self.db.query(CrewMember).options(
-                joinedload(CrewMember.position)
-            ).filter(CrewMember.certification_level == certification_level)
+            with self.db_manager.get_connection() as conn:
+                with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+                    cursor.execute(query, (departure_time, departure_time, arrival_time, arrival_time,
+                                           departure_time, arrival_time))
+                    results = cursor.fetchall()
+                    return [CrewMember(**dict(row)) for row in results]
+        except psycopg2.Error as e:
+            raise Exception(f"Database error finding available crew for flight: {e}")
 
-            if position_id:
-                query = query.filter(CrewMember.position_id == position_id)
+    @log_database_operation
+    def update_crew_member(self, crew_id: int, update_data: Dict[str, Any]) -> Optional[CrewMember]:
+        """Оновлення даних члена екіпажу"""
+        if not update_data:
+            return self.find_by_id(crew_id)
 
-            return query.order_by(CrewMember.experience_years.desc()).all()
-        except SQLAlchemyError as e:
-            logger.error(f"Error getting crew by certification: {str(e)}")
-            raise
+        set_clause = ", ".join([f"{key} = %({key})s" for key in update_data.keys()])
+        query = f"UPDATE crew_members SET {set_clause}, updated_at = CURRENT_TIMESTAMP WHERE id = %(id)s RETURNING *"
 
-    def get_captains(self) -> List[CrewMember]:
-        """
-        Отримати всіх капітанів (пілотів з рівнем CAPTAIN)
-        """
+        update_data['id'] = crew_id
+
         try:
-            pilot_position = self.db.query(CrewPosition).filter(
-                CrewPosition.position_name == 'PILOT'
-            ).first()
+            with self.db_manager.get_connection() as conn:
+                with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+                    cursor.execute(query, update_data)
+                    result = cursor.fetchone()
+                    conn.commit()
+                    return CrewMember(**dict(result)) if result else None
+        except psycopg2.Error as e:
+            raise Exception(f"Database error updating crew member: {e}")
 
-            if not pilot_position:
-                return []
+    @log_database_operation
+    def set_availability(self, crew_id: int, is_available: bool) -> bool:
+        """Встановлення доступності члена екіпажу"""
+        query = "UPDATE crew_members SET is_available = %s, updated_at = CURRENT_TIMESTAMP WHERE id = %s"
 
-            return self.db.query(CrewMember).options(
-                joinedload(CrewMember.position)
-            ).filter(
-                and_(
-                    CrewMember.position_id == pilot_position.id,
-                    CrewMember.certification_level == CertificationLevel.CAPTAIN
-                )
-            ).order_by(CrewMember.experience_years.desc()).all()
-        except SQLAlchemyError as e:
-            logger.error(f"Error getting captains: {str(e)}")
-            raise
-
-    def get_senior_crew(self, position_name: Optional[str] = None) -> List[CrewMember]:
-        """
-        Отримати досвідчених членів екіпажу (SENIOR та CAPTAIN)
-        """
         try:
-            query = self.db.query(CrewMember).options(
-                joinedload(CrewMember.position)
-            ).filter(
-                CrewMember.certification_level.in_([CertificationLevel.SENIOR, CertificationLevel.CAPTAIN])
-            )
+            with self.db_manager.get_connection() as conn:
+                with conn.cursor() as cursor:
+                    cursor.execute(query, (is_available, crew_id))
+                    conn.commit()
+                    return cursor.rowcount > 0
+        except psycopg2.Error as e:
+            raise Exception(f"Database error setting crew availability: {e}")
 
-            if position_name:
-                query = query.join(CrewPosition).filter(CrewPosition.position_name == position_name)
+    # Методи для роботи з посадами
+    @log_database_operation
+    def get_all_positions(self) -> List[CrewPosition]:
+        """Отримання всіх посад екіпажу"""
+        query = "SELECT * FROM crew_positions ORDER BY position_name"
 
-            return query.order_by(CrewMember.certification_level.desc(),
-                                  CrewMember.experience_years.desc()).all()
-        except SQLAlchemyError as e:
-            logger.error(f"Error getting senior crew: {str(e)}")
-            raise
-
-    def set_availability(self, crew_member_id: int, is_available: bool) -> Optional[CrewMember]:
-        """
-        Встановити доступність члена екіпажу
-        """
         try:
-            crew_member = self.get_by_id(crew_member_id)
-            if not crew_member:
-                return None
+            with self.db_manager.get_connection() as conn:
+                with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+                    cursor.execute(query)
+                    results = cursor.fetchall()
+                    return [CrewPosition(**dict(row)) for row in results]
+        except psycopg2.Error as e:
+            raise Exception(f"Database error getting crew positions: {e}")
 
-            crew_member.is_available = is_available
-            self.db.commit()
-            self.db.refresh(crew_member)
+    @log_database_operation
+    def find_position_by_id(self, position_id: int) -> Optional[CrewPosition]:
+        """Пошук посади за ID"""
+        query = "SELECT * FROM crew_positions WHERE id = %s"
 
-            logger.info(f"Set availability for {crew_member.employee_id} to {is_available}")
-            return crew_member
-        except SQLAlchemyError as e:
-            self.db.rollback()
-            logger.error(f"Error setting availability for crew member {crew_member_id}: {str(e)}")
-            raise
-
-    def promote_crew_member(self, crew_member_id: int) -> Optional[CrewMember]:
-        """
-        Підвищити рівень сертифікації члена екіпажу
-        """
         try:
-            crew_member = self.get_by_id(crew_member_id)
-            if not crew_member:
-                return None
-
-            current_level = crew_member.certification_level
-            if current_level == CertificationLevel.JUNIOR:
-                crew_member.certification_level = CertificationLevel.SENIOR
-            elif current_level == CertificationLevel.SENIOR:
-                crew_member.certification_level = CertificationLevel.CAPTAIN
-
-            self.db.commit()
-            self.db.refresh(crew_member)
-
-            logger.info(
-                f"Promoted {crew_member.employee_id} from {current_level.value} to {crew_member.certification_level.value}")
-            return crew_member
-        except SQLAlchemyError as e:
-            self.db.rollback()
-            logger.error(f"Error promoting crew member {crew_member_id}: {str(e)}")
-            raise
-
-    def get_crew_statistics(self) -> Dict[str, Any]:
-        """
-        Отримати статистику по екіпажу
-        """
-        try:
-            total_crew = self.db.query(func.count(CrewMember.id)).scalar()
-            available_crew = self.db.query(func.count(CrewMember.id)).filter(
-                CrewMember.is_available == True
-            ).scalar()
-
-            # Статистика за посадами
-            position_stats = self.db.query(
-                CrewPosition.position_name,
-                func.count(CrewMember.id).label('count')
-            ).join(CrewMember).group_by(CrewPosition.position_name).all()
-
-            # Статистика за рівнями сертифікації
-            certification_stats = self.db.query(
-                CrewMember.certification_level,
-                func.count(CrewMember.id).label('count')
-            ).group_by(CrewMember.certification_level).all()
-
-            return {
-                'total_crew_members': total_crew,
-                'available_crew_members': available_crew,
-                'unavailable_crew_members': total_crew - available_crew,
-                'positions': [{'position': pos.position_name, 'count': pos.count} for pos in position_stats],
-                'certifications': [{'level': cert.certification_level.value, 'count': cert.count} for cert in
-                                   certification_stats]
-            }
-        except SQLAlchemyError as e:
-            logger.error(f"Error getting crew statistics: {str(e)}")
-            raise
-
-    def get_crew_workload_report(self, start_date: datetime,
-                                 end_date: datetime) -> List[Dict[str, Any]]:
-        """
-        Отримати звіт про навантаження екіпажу за період
-        """
-        try:
-            # Запит для підрахунку навантаження кожного члена екіпажу
-            workload_query = self.db.query(
-                CrewMember.id,
-                CrewMember.employee_id,
-                CrewMember.first_name,
-                CrewMember.last_name,
-                CrewPosition.position_name,
-                func.count(FlightAssignment.id).label('flight_count'),
-                func.sum(
-                    func.extract('epoch', Flight.arrival_time - Flight.departure_time) / 3600
-                ).label('total_hours')
-            ).join(CrewPosition).outerjoin(FlightAssignment).outerjoin(Flight).filter(
-                and_(
-                    Flight.departure_time >= start_date,
-                    Flight.departure_time <= end_date,
-                    FlightAssignment.status.in_([AssignmentStatus.ASSIGNED, AssignmentStatus.CONFIRMED])
-                )
-            ).group_by(
-                CrewMember.id, CrewMember.employee_id, CrewMember.first_name,
-                CrewMember.last_name, CrewPosition.position_name
-            ).all()
-
-            return [
-                {
-                    'crew_member_id': row.id,
-                    'employee_id': row.employee_id,
-                    'full_name': f"{row.first_name} {row.last_name}",
-                    'position': row.position_name,
-                    'flight_count': row.flight_count or 0,
-                    'total_hours': round(float(row.total_hours or 0), 2)
-                }
-                for row in workload_query
-            ]
-        except SQLAlchemyError as e:
-            logger.error(f"Error getting crew workload report: {str(e)}")
-            raise
-
-    def search_crew_members(self, search_term: str, position_id: Optional[int] = None,
-                            available_only: bool = False) -> List[CrewMember]:
-        """
-        Пошук членів екіпажу за іменем або службовим номером
-        """
-        try:
-            search_pattern = f"%{search_term}%"
-            query = self.db.query(CrewMember).options(
-                joinedload(CrewMember.position)
-            ).filter(
-                or_(
-                    CrewMember.first_name.ilike(search_pattern),
-                    CrewMember.last_name.ilike(search_pattern),
-                    CrewMember.employee_id.ilike(search_pattern),
-                    (CrewMember.first_name + ' ' + CrewMember.last_name).ilike(search_pattern)
-                )
-            )
-
-            if position_id:
-                query = query.filter(CrewMember.position_id == position_id)
-
-            if available_only:
-                query = query.filter(CrewMember.is_available == True)
-
-            return query.order_by(CrewMember.last_name, CrewMember.first_name).all()
-        except SQLAlchemyError as e:
-            logger.error(f"Error searching crew members: {str(e)}")
-            raise
-
-    def get_crew_with_assignments(self, crew_member_id: int) -> Optional[Dict[str, Any]]:
-        """
-        Отримати члена екіпажу з усіма його поточними призначеннями
-        """
-        try:
-            crew_member = self.db.query(CrewMember).options(
-                joinedload(CrewMember.position)
-            ).filter(CrewMember.id == crew_member_id).first()
-
-            if not crew_member:
-                return None
-
-            # Отримуємо активні призначення
-            active_assignments = self.db.query(FlightAssignment).options(
-                joinedload(FlightAssignment.flight)
-            ).filter(
-                and_(
-                    FlightAssignment.crew_member_id == crew_member_id,
-                    FlightAssignment.status == AssignmentStatus.ASSIGNED,
-                    Flight.departure_time >= datetime.utcnow()
-                )
-            ).join(Flight).order_by(Flight.departure_time).all()
-
-            return {
-                'crew_member': crew_member,
-                'active_assignments': active_assignments,
-                'assignment_count': len(active_assignments)
-            }
-        except SQLAlchemyError as e:
-            logger.error(f"Error getting crew member with assignments: {str(e)}")
-            raise
+            with self.db_manager.get_connection() as conn:
+                with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+                    cursor.execute(query, (position_id,))
+                    result = cursor.fetchone()
+                    return CrewPosition(**dict(result)) if result else None
+        except psycopg2.Error as e:
+            raise Exception(f"Database error finding position by id: {e}")

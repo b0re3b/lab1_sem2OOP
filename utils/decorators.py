@@ -1,14 +1,12 @@
 import functools
 import time
-from typing import Any, Callable, List, Optional, Union
-from fastapi import HTTPException, Depends, Request
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from typing import Callable, List, Union
 import jwt
-from datetime import datetime
-
+from fastapi import HTTPException, Depends
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from config.logging_config import log_info, log_error, log_warning, log_auth_event
-from utils.jwt_utils import JWTManager
 from models.user import User
+from utils.jwt_utils import JWTManager
 
 
 class AuthDecorators:

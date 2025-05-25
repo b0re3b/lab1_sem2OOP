@@ -1,368 +1,463 @@
-import logging
-from datetime import datetime
 from typing import List, Optional, Dict, Any
-from sqlalchemy import and_, or_, text
-from sqlalchemy.exc import SQLAlchemyError, IntegrityError
-from sqlalchemy.orm import Session, joinedload
-
-from ..models.flight_assignment import FlightAssignment, AssignmentStatus
-from ..models.flight import Flight
-from ..models.crew_member import CrewMember
-
-logger = logging.getLogger(__name__)
+from datetime import datetime
+import psycopg2
+from psycopg2.extras import RealDictCursor
+from config.database import DatabaseConfig
+from config.logging_config import log_database_operation
+from models.flight_assignment import FlightAssignment
+from utils.validators import AssignmentValidator
 
 
 class AssignmentRepository:
-    """
-    Репозиторій для роботи з призначеннями екіпажу на рейси
-    Реалізує специфічну логіку для управління призначеннями
-    """
+    def __init__(self):
+        self.table_name = "flight_assignments"
+        self.validator = AssignmentValidator()
+        self.db_manager = DatabaseConfig()
+    @log_database_operation
+    def create_assignment(self, assignment_data: Dict[str, Any]) -> Optional[FlightAssignment]:
+        """Створення нового призначення"""
+        self.validator.validate_assignment_data(assignment_data)
 
-    def __init__(self, db_session: Session):
-        self.db = db_session
+        # Перевіряємо доступність члена екіпажу
+        if not self._check_crew_availability(assignment_data['crew_member_id'],
+                                             assignment_data['flight_id']):
+            raise Exception("Crew member is not available for this flight")
 
-    def get_by_id(self, assignment_id: int) -> Optional[FlightAssignment]:
-        """
-        Отримати призначення за ID
-        """
+        query = """
+                INSERT INTO flight_assignments (flight_id, crew_member_id, assigned_by, status, notes)
+                VALUES (%(flight_id)s, %(crew_member_id)s, %(assigned_by)s, %(status)s, %(notes)s) RETURNING * \
+                """
+
         try:
-            return self.db.query(FlightAssignment).filter(FlightAssignment.id == assignment_id).first()
-        except SQLAlchemyError as e:
-            logger.error(f"Error getting assignment by ID {assignment_id}: {str(e)}")
-            raise
+            with self.db_manager.get_connection() as conn:
+                with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+                    cursor.execute(query, assignment_data)
+                    result = cursor.fetchone()
+                    conn.commit()
+                    return FlightAssignment(**dict(result)) if result else None
+        except psycopg2.Error as e:
+            raise Exception(f"Database error creating assignment: {e}")
 
-    def create_assignment(self, flight_id: int, crew_member_id: int,
-                          assigned_by: int, notes: Optional[str] = None) -> Optional[FlightAssignment]:
-        """
-        Створити нове призначення з перевіркою конфліктів
-        """
+    @log_database_operation
+    def find_by_id(self, assignment_id: int) -> Optional[FlightAssignment]:
+        """Пошук призначення за ID"""
+        query = """
+                SELECT fa.*, \
+                       f.flight_number, \
+                       f.departure_time, \
+                       f.arrival_time,
+                       cm.first_name || ' ' || cm.last_name as crew_member_name,
+                       cp.position_name,
+                       u.first_name || ' ' || u.last_name   as assigned_by_name
+                FROM flight_assignments fa
+                         JOIN flights f ON fa.flight_id = f.id
+                         JOIN crew_members cm ON fa.crew_member_id = cm.id
+                         JOIN crew_positions cp ON cm.position_id = cp.id
+                         JOIN users u ON fa.assigned_by = u.id
+                WHERE fa.id = %s \
+                """
+
         try:
-            # Перевіряємо чи немає конфліктуючих призначень
-            if not self.check_crew_availability(crew_member_id, flight_id):
-                logger.warning(f"Crew member {crew_member_id} is not available for flight {flight_id}")
-                return None
+            with self.db_manager.get_connection() as conn:
+                with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+                    cursor.execute(query, (assignment_id,))
+                    result = cursor.fetchone()
+                    return FlightAssignment(**dict(result)) if result else None
+        except psycopg2.Error as e:
+            raise Exception(f"Database error finding assignment by id: {e}")
 
-            assignment = FlightAssignment(
-                flight_id=flight_id,
-                crew_member_id=crew_member_id,
-                assigned_by=assigned_by,
-                status=AssignmentStatus.ASSIGNED,
-                notes=notes,
-                assigned_at=datetime.utcnow()
-            )
+    @log_database_operation
+    def find_by_flight_id(self, flight_id: int) -> List[FlightAssignment]:
+        """Пошук всіх призначень для рейсу"""
+        query = """
+                SELECT fa.*, \
+                       f.flight_number, \
+                       f.departure_time, \
+                       f.arrival_time,
+                       cm.first_name || ' ' || cm.last_name as crew_member_name,
+                       cm.employee_id,
+                       cp.position_name,
+                       u.first_name || ' ' || u.last_name   as assigned_by_name
+                FROM flight_assignments fa
+                         JOIN flights f ON fa.flight_id = f.id
+                         JOIN crew_members cm ON fa.crew_member_id = cm.id
+                         JOIN crew_positions cp ON cm.position_id = cp.id
+                         JOIN users u ON fa.assigned_by = u.id
+                WHERE fa.flight_id = %s \
+                  AND fa.status = 'ASSIGNED'
+                ORDER BY cp.position_name, cm.last_name \
+                """
 
-            self.db.add(assignment)
-            self.db.commit()
-            self.db.refresh(assignment)
-
-            logger.info(f"Created assignment {assignment.id} for crew {crew_member_id} to flight {flight_id}")
-            return assignment
-
-        except IntegrityError as e:
-            self.db.rollback()
-            logger.error(f"Integrity error creating assignment: {str(e)}")
-            return None
-        except SQLAlchemyError as e:
-            self.db.rollback()
-            logger.error(f"Error creating assignment: {str(e)}")
-            raise
-
-    def get_assignments_by_flight(self, flight_id: int,
-                                  status: Optional[AssignmentStatus] = None) -> List[FlightAssignment]:
-        """
-        Отримати всі призначення для конкретного рейсу
-        """
         try:
-            query = self.db.query(FlightAssignment).options(
-                joinedload(FlightAssignment.crew_member).joinedload(CrewMember.position),
-                joinedload(FlightAssignment.flight)
-            ).filter(FlightAssignment.flight_id == flight_id)
+            with self.db_manager.get_connection() as conn:
+                with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+                    cursor.execute(query, (flight_id,))
+                    results = cursor.fetchall()
+                    return [FlightAssignment(**dict(row)) for row in results]
+        except psycopg2.Error as e:
+            raise Exception(f"Database error finding assignments by flight: {e}")
 
-            if status:
-                query = query.filter(FlightAssignment.status == status)
+    @log_database_operation
+    def find_by_crew_member_id(self, crew_member_id: int) -> List[FlightAssignment]:
+        """Пошук призначень для члена екіпажу"""
+        query = """
+                SELECT fa.*, \
+                       f.flight_number, \
+                       f.departure_city, \
+                       f.arrival_city,
+                       f.departure_time, \
+                       f.arrival_time, \
+                       f.status                             as flight_status,
+                       cm.first_name || ' ' || cm.last_name as crew_member_name,
+                       cp.position_name,
+                       u.first_name || ' ' || u.last_name   as assigned_by_name
+                FROM flight_assignments fa
+                         JOIN flights f ON fa.flight_id = f.id
+                         JOIN crew_members cm ON fa.crew_member_id = cm.id
+                         JOIN crew_positions cp ON cm.position_id = cp.id
+                         JOIN users u ON fa.assigned_by = u.id
+                WHERE fa.crew_member_id = %s \
+                  AND fa.status = 'ASSIGNED'
+                ORDER BY f.departure_time \
+                """
 
-            return query.all()
-        except SQLAlchemyError as e:
-            logger.error(f"Error getting assignments for flight {flight_id}: {str(e)}")
-            raise
-
-    def get_assignments_by_crew_member(self, crew_member_id: int,
-                                       active_only: bool = True) -> List[FlightAssignment]:
-        """
-        Отримати всі призначення для конкретного члена екіпажу
-        """
         try:
-            query = self.db.query(FlightAssignment).options(
-                joinedload(FlightAssignment.flight),
-                joinedload(FlightAssignment.crew_member)
-            ).filter(FlightAssignment.crew_member_id == crew_member_id)
+            with self.db_manager.get_connection() as conn:
+                with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+                    cursor.execute(query, (crew_member_id,))
+                    results = cursor.fetchall()
+                    return [FlightAssignment(**dict(row)) for row in results]
+        except psycopg2.Error as e:
+            raise Exception(f"Database error finding assignments by crew member: {e}")
 
-            if active_only:
-                query = query.filter(FlightAssignment.status == AssignmentStatus.ASSIGNED)
+    @log_database_operation
+    def find_by_date_range(self, start_date: datetime, end_date: datetime) -> List[FlightAssignment]:
+        """Пошук призначень за період"""
+        query = """
+                SELECT fa.*, \
+                       f.flight_number, \
+                       f.departure_city, \
+                       f.arrival_city,
+                       f.departure_time, \
+                       f.arrival_time,
+                       cm.first_name || ' ' || cm.last_name as crew_member_name,
+                       cp.position_name,
+                       u.first_name || ' ' || u.last_name   as assigned_by_name
+                FROM flight_assignments fa
+                         JOIN flights f ON fa.flight_id = f.id
+                         JOIN crew_members cm ON fa.crew_member_id = cm.id
+                         JOIN crew_positions cp ON cm.position_id = cp.id
+                         JOIN users u ON fa.assigned_by = u.id
+                WHERE f.departure_time >= %s \
+                  AND f.departure_time <= %s
+                  AND fa.status = 'ASSIGNED'
+                ORDER BY f.departure_time, f.flight_number \
+                """
 
-            return query.order_by(FlightAssignment.assigned_at.desc()).all()
-        except SQLAlchemyError as e:
-            logger.error(f"Error getting assignments for crew member {crew_member_id}: {str(e)}")
-            raise
-
-    def check_crew_availability(self, crew_member_id: int, flight_id: int) -> bool:
-        """
-        Перевірити доступність члена екіпажу для призначення на рейс
-        """
         try:
-            # Отримуємо інформацію про рейс
-            flight = self.db.query(Flight).filter(Flight.id == flight_id).first()
-            if not flight:
-                return False
+            with self.db_manager.get_connection() as conn:
+                with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+                    cursor.execute(query, (start_date, end_date))
+                    results = cursor.fetchall()
+                    return [FlightAssignment(**dict(row)) for row in results]
+        except psycopg2.Error as e:
+            raise Exception(f"Database error finding assignments by date range: {e}")
 
-            # Використовуємо функцію PostgreSQL для перевірки доступності
-            result = self.db.execute(
-                text("SELECT check_crew_availability(:crew_id, :departure, :arrival)"),
-                {
-                    'crew_id': crew_member_id,
-                    'departure': flight.departure_time,
-                    'arrival': flight.arrival_time
-                }
-            ).scalar()
+    @log_database_operation
+    def update_assignment_status(self, assignment_id: int, status: str, updated_by: int, notes: Optional[str] = None) -> \
+    Optional[FlightAssignment]:
+        """Оновлення статусу призначення"""
+        self.validator.validate_enum_value('status', status, ['ASSIGNED', 'CONFIRMED', 'CANCELLED'])
 
-            return bool(result)
-        except SQLAlchemyError as e:
-            logger.error(f"Error checking crew availability: {str(e)}")
-            return False
+        query = """
+                UPDATE flight_assignments
+                SET status     = %s, \
+                    notes      = COALESCE(%s, notes), \
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id = %s RETURNING * \
+                """
 
-    def get_conflicting_assignments(self, crew_member_id: int,
-                                    departure_time: datetime,
-                                    arrival_time: datetime) -> list[type[FlightAssignment]]:
-        """
-        Знайти конфліктуючі призначення для члена екіпажу
-        """
         try:
-            return self.db.query(FlightAssignment).join(Flight).filter(
-                and_(
-                    FlightAssignment.crew_member_id == crew_member_id,
-                    FlightAssignment.status == AssignmentStatus.ASSIGNED,
-                    or_(
-                        and_(Flight.departure_time <= departure_time, Flight.arrival_time >= departure_time),
-                        and_(Flight.departure_time <= arrival_time, Flight.arrival_time >= arrival_time),
-                        and_(Flight.departure_time >= departure_time, Flight.arrival_time <= arrival_time)
-                    )
-                )
-            ).options(joinedload(FlightAssignment.flight)).all()
-        except SQLAlchemyError as e:
-            logger.error(f"Error finding conflicting assignments: {str(e)}")
-            raise
+            with self.db_manager.get_connection() as conn:
+                with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+                    cursor.execute(query, (status, notes, assignment_id))
+                    result = cursor.fetchone()
+                    conn.commit()
+                    return FlightAssignment(**dict(result)) if result else None
+        except psycopg2.Error as e:
+            raise Exception(f"Database error updating assignment status: {e}")
 
-    def confirm_assignment(self, assignment_id: int) -> Optional[FlightAssignment]:
+    @log_database_operation
+    def update_assignment(self, assignment_id: int, assignment_data: Dict[str, Any]) -> Optional[FlightAssignment]:
+        """Повне оновлення призначення"""
+        self.validator.validate_assignment_data(assignment_data)
+
+        # Якщо змінюється член екіпажу або рейс, перевіряємо доступність
+        if 'crew_member_id' in assignment_data or 'flight_id' in assignment_data:
+            current_assignment = self.find_by_id(assignment_id)
+            if not current_assignment:
+                raise Exception("Assignment not found")
+
+            crew_member_id = assignment_data.get('crew_member_id', current_assignment.crew_member_id)
+            flight_id = assignment_data.get('flight_id', current_assignment.flight_id)
+
+            if not self._check_crew_availability(crew_member_id, flight_id, assignment_id):
+                raise Exception("Crew member is not available for this flight")
+
+        # Створюємо динамічний запит на основі переданих полів
+        update_fields = []
+        params = []
+
+        for field, value in assignment_data.items():
+            if field in ['flight_id', 'crew_member_id', 'status', 'notes']:
+                update_fields.append(f"{field} = %s")
+                params.append(value)
+
+        if not update_fields:
+            raise Exception("No valid fields to update")
+
+        update_fields.append("updated_at = CURRENT_TIMESTAMP")
+        params.append(assignment_id)
+
+        query = f"""
+            UPDATE flight_assignments 
+            SET {', '.join(update_fields)}
+            WHERE id = %s
+            RETURNING *
         """
-        Підтвердити призначення
-        """
+
         try:
-            assignment = self.get_by_id(assignment_id)
-            if not assignment:
-                return None
+            with self.db_manager.get_connection() as conn:
+                with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+                    cursor.execute(query, params)
+                    result = cursor.fetchone()
+                    conn.commit()
+                    return FlightAssignment(**dict(result)) if result else None
+        except psycopg2.Error as e:
+            raise Exception(f"Database error updating assignment: {e}")
 
-            assignment.confirm()
-            self.db.commit()
-            self.db.refresh(assignment)
-
-            logger.info(f"Confirmed assignment {assignment_id}")
-            return assignment
-        except SQLAlchemyError as e:
-            self.db.rollback()
-            logger.error(f"Error confirming assignment {assignment_id}: {str(e)}")
-            raise
-
-    def cancel_assignment(self, assignment_id: int, reason: Optional[str] = None) -> Optional[FlightAssignment]:
-        """
-        Скасувати призначення
-        """
-        try:
-            assignment = self.get_by_id(assignment_id)
-            if not assignment:
-                return None
-
-            assignment.cancel()
-            if reason:
-                assignment.notes = f"{assignment.notes or ''}\nCancelled: {reason}"
-
-            self.db.commit()
-            self.db.refresh(assignment)
-
-            logger.info(f"Cancelled assignment {assignment_id}")
-            return assignment
-        except SQLAlchemyError as e:
-            self.db.rollback()
-            logger.error(f"Error cancelling assignment {assignment_id}: {str(e)}")
-            raise
-
-    def update_assignment(self, assignment_id: int, **kwargs) -> Optional[FlightAssignment]:
-        """
-        Оновити призначення
-        """
-        try:
-            assignment = self.get_by_id(assignment_id)
-            if not assignment:
-                return None
-
-            for key, value in kwargs.items():
-                if hasattr(assignment, key):
-                    setattr(assignment, key, value)
-
-            self.db.commit()
-            self.db.refresh(assignment)
-
-            logger.info(f"Updated assignment {assignment_id}")
-            return assignment
-        except SQLAlchemyError as e:
-            self.db.rollback()
-            logger.error(f"Error updating assignment {assignment_id}: {str(e)}")
-            raise
-
+    @log_database_operation
     def delete_assignment(self, assignment_id: int) -> bool:
-        """
-        Видалити призначення
-        """
+        """Видалення призначення"""
+        query = "DELETE FROM flight_assignments WHERE id = %s"
+
         try:
-            assignment = self.get_by_id(assignment_id)
-            if not assignment:
-                return False
+            with self.db_manager.get_connection() as conn:
+                with conn.cursor() as cursor:
+                    cursor.execute(query, (assignment_id,))
+                    deleted_rows = cursor.rowcount
+                    conn.commit()
+                    return deleted_rows > 0
+        except psycopg2.Error as e:
+            raise Exception(f"Database error deleting assignment: {e}")
 
-            self.db.delete(assignment)
-            self.db.commit()
+    @log_database_operation
+    def get_all_assignments(self, page: int = 1, page_size: int = 50, filters: Optional[Dict[str, Any]] = None) -> Dict[
+        str, Any]:
+        """Отримання всіх призначень з пагінацією та фільтрацією"""
+        offset = (page - 1) * page_size
+        where_conditions = []
+        params = []
 
-            logger.info(f"Deleted assignment {assignment_id}")
-            return True
-        except SQLAlchemyError as e:
-            self.db.rollback()
-            logger.error(f"Error deleting assignment {assignment_id}: {str(e)}")
-            raise
+        # Застосовуємо фільтри
+        if filters:
+            if filters.get('status'):
+                where_conditions.append("fa.status = %s")
+                params.append(filters['status'])
 
-    def get_all_assignments(self, limit: Optional[int] = None,
-                           offset: Optional[int] = None) -> list[type[FlightAssignment]]:
+            if filters.get('flight_id'):
+                where_conditions.append("fa.flight_id = %s")
+                params.append(filters['flight_id'])
+
+            if filters.get('crew_member_id'):
+                where_conditions.append("fa.crew_member_id = %s")
+                params.append(filters['crew_member_id'])
+
+            if filters.get('date_from'):
+                where_conditions.append("f.departure_time >= %s")
+                params.append(filters['date_from'])
+
+            if filters.get('date_to'):
+                where_conditions.append("f.departure_time <= %s")
+                params.append(filters['date_to'])
+
+        where_clause = "WHERE " + " AND ".join(where_conditions) if where_conditions else ""
+
+        # Запит для отримання даних
+        data_query = f"""
+            SELECT fa.*, f.flight_number, f.departure_city, f.arrival_city,
+                   f.departure_time, f.arrival_time, f.status as flight_status,
+                   cm.first_name || ' ' || cm.last_name as crew_member_name,
+                   cm.employee_id,
+                   cp.position_name,
+                   u.first_name || ' ' || u.last_name as assigned_by_name
+            FROM flight_assignments fa
+            JOIN flights f ON fa.flight_id = f.id
+            JOIN crew_members cm ON fa.crew_member_id = cm.id
+            JOIN crew_positions cp ON cm.position_id = cp.id
+            JOIN users u ON fa.assigned_by = u.id
+            {where_clause}
+            ORDER BY f.departure_time DESC, fa.assigned_at DESC
+            LIMIT %s OFFSET %s
         """
-        Отримати всі призначення
+
+        # Запит для підрахунку загальної кількості
+        count_query = f"""
+            SELECT COUNT(*) as total
+            FROM flight_assignments fa
+            JOIN flights f ON fa.flight_id = f.id
+            JOIN crew_members cm ON fa.crew_member_id = cm.id
+            {where_clause}
         """
+
         try:
-            query = self.db.query(FlightAssignment).options(
-                joinedload(FlightAssignment.flight),
-                joinedload(FlightAssignment.crew_member)
-            )
+            with self.db_manager.get_connection() as conn:
+                with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+                    # Отримуємо дані
+                    cursor.execute(data_query, params + [page_size, offset])
+                    assignments = [FlightAssignment(**dict(row)) for row in cursor.fetchall()]
 
-            if offset:
-                query = query.offset(offset)
-            if limit:
-                query = query.limit(limit)
+                    # Отримуємо загальну кількість
+                    cursor.execute(count_query, params)
+                    total_count = cursor.fetchone()['total']
 
-            return query.all()
-        except SQLAlchemyError as e:
-            logger.error(f"Error getting all assignments: {str(e)}")
-            raise
+                    return {
+                        'assignments': assignments,
+                        'total': total_count,
+                        'page': page,
+                        'page_size': page_size,
+                        'total_pages': (total_count + page_size - 1) // page_size
+                    }
+        except psycopg2.Error as e:
+            raise Exception(f"Database error getting assignments: {e}")
 
+    @log_database_operation
     def get_flight_crew_statistics(self, flight_id: int) -> Dict[str, Any]:
-        """
-        Отримати статистику по екіпажу рейсу
-        """
+        """Отримання статистики екіпажу для рейсу"""
+        query = """
+                SELECT f.id         as flight_id, \
+                       f.flight_number, \
+                       f.crew_required, \
+                       COUNT(fa.id) as assigned_count, \
+                       CASE \
+                           WHEN COUNT(fa.id) >= f.crew_required THEN 'FULLY_STAFFED' \
+                           WHEN COUNT(fa.id) > 0 THEN 'PARTIALLY_STAFFED' \
+                           ELSE 'NOT_STAFFED' \
+                           END      as staffing_status, \
+                       ARRAY_AGG( \
+                               CASE \
+                                   WHEN fa.id IS NOT NULL THEN \
+                                       JSON_BUILD_OBJECT( \
+                                               'crew_member_id', cm.id, \
+                                               'name', cm.first_name || ' ' || cm.last_name, \
+                                               'position', cp.position_name, \
+                                               'experience_years', cm.experience_years \
+                                       ) \
+                                   END \
+                       )               FILTER (WHERE fa.id IS NOT NULL) as assigned_crew
+                FROM flights f
+                         LEFT JOIN flight_assignments fa ON f.id = fa.flight_id AND fa.status = 'ASSIGNED'
+                         LEFT JOIN crew_members cm ON fa.crew_member_id = cm.id
+                         LEFT JOIN crew_positions cp ON cm.position_id = cp.id
+                WHERE f.id = %s
+                GROUP BY f.id, f.flight_number, f.crew_required \
+                """
+
         try:
-            # Використовуємо представлення flight_statistics
-            result = self.db.execute(
-                text("SELECT * FROM flight_statistics WHERE flight_id = :flight_id"),
-                {'flight_id': flight_id}
-            ).fetchone()
+            with self.db_manager.get_connection() as conn:
+                with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+                    cursor.execute(query, (flight_id,))
+                    result = cursor.fetchone()
+                    return dict(result) if result else {}
+        except psycopg2.Error as e:
+            raise Exception(f"Database error getting flight crew statistics: {e}")
 
-            if result:
-                return {
-                    'flight_id': result.flight_id,
-                    'flight_number': result.flight_number,
-                    'departure_city': result.departure_city,
-                    'arrival_city': result.arrival_city,
-                    'status': result.status,
-                    'assigned_crew_count': result.assigned_crew_count,
-                    'crew_required': result.crew_required,
-                    'staffing_status': result.staffing_status
-                }
-            return {}
-        except SQLAlchemyError as e:
-            logger.error(f"Error getting flight crew statistics for flight {flight_id}: {str(e)}")
-            raise
+    @log_database_operation
+    def get_crew_member_workload(self, crew_member_id: int, start_date: datetime, end_date: datetime) -> Dict[str, Any]:
+        """Отримання навантаження члена екіпажу за період"""
+        query = """
+                SELECT cm.id                                                               as crew_member_id, \
+                       cm.first_name || ' ' || cm.last_name                                as name, \
+                       cp.position_name, \
+                       COUNT(fa.id)                                                        as total_flights, \
+                       SUM(EXTRACT(EPOCH FROM (f.arrival_time - f.departure_time)) / 3600) as total_flight_hours, \
+                       ARRAY_AGG( \
+                               JSON_BUILD_OBJECT( \
+                                       'flight_number', f.flight_number, \
+                                       'departure_time', f.departure_time, \
+                                       'arrival_time', f.arrival_time, \
+                                       'route', f.departure_city || ' - ' || f.arrival_city \
+                               ) ORDER BY f.departure_time \
+                       )                                                                   as flights
+                FROM crew_members cm
+                         JOIN crew_positions cp ON cm.position_id = cp.id
+                         LEFT JOIN flight_assignments fa ON cm.id = fa.crew_member_id AND fa.status = 'ASSIGNED'
+                         LEFT JOIN flights f ON fa.flight_id = f.id
+                    AND f.departure_time >= %s AND f.departure_time <= %s
+                WHERE cm.id = %s
+                GROUP BY cm.id, cm.first_name, cm.last_name, cp.position_name \
+                """
 
-    def get_assignments_by_date_range(self, start_date: datetime,
-                                      end_date: datetime,
-                                      status: Optional[AssignmentStatus] = None) -> list[type[FlightAssignment]]:
-        """
-        Отримати призначення в заданому діапазоні дат
-        """
         try:
-            query = self.db.query(FlightAssignment).join(Flight).options(
-                joinedload(FlightAssignment.flight),
-                joinedload(FlightAssignment.crew_member).joinedload(CrewMember.position)
-            ).filter(
-                and_(
-                    Flight.departure_time >= start_date,
-                    Flight.departure_time <= end_date
-                )
-            )
+            with self.db_manager.get_connection() as conn:
+                with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+                    cursor.execute(query, (start_date, end_date, crew_member_id))
+                    result = cursor.fetchone()
+                    return dict(result) if result else {}
+        except psycopg2.Error as e:
+            raise Exception(f"Database error getting crew member workload: {e}")
 
-            if status:
-                query = query.filter(FlightAssignment.status == status)
+    def _check_crew_availability(self, crew_member_id: int, flight_id: int,
+                                 exclude_assignment_id: Optional[int] = None) -> bool:
+        """Приватний метод для перевірки доступності члена екіпажу"""
+        # Отримуємо інформацію про рейс
+        flight_query = "SELECT departure_time, arrival_time FROM flights WHERE id = %s"
 
-            return query.order_by(Flight.departure_time).all()
-        except SQLAlchemyError as e:
-            logger.error(f"Error getting assignments by date range: {str(e)}")
-            raise
-
-    def bulk_assign_crew(self, assignments_data: List[Dict[str, Any]]) -> List[FlightAssignment]:
-        """
-        Масове призначення екіпажу
-        """
         try:
-            created_assignments = []
+            with self.db_manager.get_connection() as conn:
+                with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+                    cursor.execute(flight_query, (flight_id,))
+                    flight = cursor.fetchone()
 
-            for data in assignments_data:
-                assignment = self.create_assignment(
-                    flight_id=data['flight_id'],
-                    crew_member_id=data['crew_member_id'],
-                    assigned_by=data['assigned_by'],
-                    notes=data.get('notes')
-                )
-                if assignment:
-                    created_assignments.append(assignment)
+                    if not flight:
+                        return False
 
-            logger.info(f"Bulk assigned {len(created_assignments)} crew members")
-            return created_assignments
-        except SQLAlchemyError as e:
-            logger.error(f"Error in bulk crew assignment: {str(e)}")
-            raise
+                    # Використовуємо функцію БД для перевірки доступності
+                    availability_query = "SELECT check_crew_availability(%s, %s, %s) as available"
+                    cursor.execute(availability_query,
+                                   (crew_member_id, flight['departure_time'], flight['arrival_time']))
+                    result = cursor.fetchone()
 
-    def get_crew_workload(self, crew_member_id: int,
-                          start_date: datetime,
-                          end_date: datetime) -> Dict[str, Any]:
-        """
-        Отримати навантаження члена екіпажу за період
-        """
-        try:
-            assignments = self.db.query(FlightAssignment).join(Flight).filter(
-                and_(
-                    FlightAssignment.crew_member_id == crew_member_id,
-                    FlightAssignment.status.in_([AssignmentStatus.ASSIGNED, AssignmentStatus.CONFIRMED]),
-                    Flight.departure_time >= start_date,
-                    Flight.departure_time <= end_date
-                )
-            ).options(joinedload(FlightAssignment.flight)).all()
+                    # Додаткова перевірка для випадку оновлення існуючого призначення
+                    if exclude_assignment_id:
+                        conflict_query = """
+                                         SELECT COUNT(*) as conflicts
+                                         FROM flight_assignments fa
+                                                  JOIN flights f ON fa.flight_id = f.id
+                                         WHERE fa.crew_member_id = %s
+                                           AND fa.status = 'ASSIGNED'
+                                           AND fa.id != %s
+                                           AND (
+                                             (f.departure_time <= %s \
+                                           AND f.arrival_time >= %s)
+                                            OR
+                                             (f.departure_time <= %s \
+                                           AND f.arrival_time >= %s)
+                                            OR
+                                             (f.departure_time >= %s \
+                                           AND f.arrival_time <= %s)
+                                             ) \
+                                         """
+                        cursor.execute(conflict_query, (
+                            crew_member_id, exclude_assignment_id,
+                            flight['departure_time'], flight['departure_time'],
+                            flight['arrival_time'], flight['arrival_time'],
+                            flight['departure_time'], flight['arrival_time']
+                        ))
+                        conflicts = cursor.fetchone()['conflicts']
+                        return conflicts == 0
 
-            total_flights = len(assignments)
-            total_hours = sum(
-                (assignment.flight.arrival_time - assignment.flight.departure_time).total_seconds() / 3600
-                for assignment in assignments
-            )
+                    return result['available'] if result else False
 
-            return {
-                'crew_member_id': crew_member_id,
-                'period_start': start_date,
-                'period_end': end_date,
-                'total_flights': total_flights,
-                'total_flight_hours': round(total_hours, 2),
-                'assignments': assignments
-            }
-        except SQLAlchemyError as e:
-            logger.error(f"Error getting crew workload: {str(e)}")
-            raise
+        except psycopg2.Error as e:
+            raise Exception(f"Database error checking crew availability: {e}")
