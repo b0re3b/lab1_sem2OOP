@@ -5,18 +5,14 @@
   </component>
   <component name="ChangeListManager">
     <list default="true" id="d45641ad-b660-47b2-9b5c-88bd20087677" name="Changes" comment="">
-      <change afterPath="$PROJECT_DIR$/airline-frontend/src/core/api.js" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/airline-frontend/src/style.css" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/airline-frontend/tailwind.config.js" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/.idea/sqldialects.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/sqldialects.xml" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/airline-frontend/src/stores/assignment.js" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/airline-frontend/src/views/AssignmentForm.vue" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/airline-frontend/src/views/CrewMember.vue" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/airline-frontend/src/views/FlightCard.vue" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/airline-frontend/package-lock.json" beforeDir="false" afterPath="$PROJECT_DIR$/airline-frontend/package-lock.json" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/airline-frontend/package.json" beforeDir="false" afterPath="$PROJECT_DIR$/airline-frontend/package.json" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/airline-frontend/src/App.vue" beforeDir="false" afterPath="$PROJECT_DIR$/airline-frontend/src/App.vue" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/airline-frontend/src/main.js" beforeDir="false" afterPath="$PROJECT_DIR$/airline-frontend/src/main.js" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/airline-frontend/src/router/index.js" beforeDir="false" afterPath="$PROJECT_DIR$/airline-frontend/src/router/index.js" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/airline-frontend/src/stores/counter.js" beforeDir="false" afterPath="$PROJECT_DIR$/airline-frontend/src/stores/auth.js" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/airline-frontend/vite.config.js" beforeDir="false" afterPath="$PROJECT_DIR$/airline-frontend/vite.config.js" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/airline-frontend/src/stores/crew.js" beforeDir="false" afterPath="$PROJECT_DIR$/airline-frontend/src/stores/crew.js" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/airline-frontend/src/views/AboutView.vue" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/airline-frontend/src/views/HomeView.vue" beforeDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -26,8 +22,9 @@
   <component name="FileTemplateManagerImpl">
     <option name="RECENT_TEMPLATES">
       <list>
-        <option value="JavaScript File" />
         <option value="CSS File" />
+        <option value="JavaScript File" />
+        <option value="Vue Composition API Component" />
       </list>
     </option>
   </component>
@@ -61,6 +58,9 @@
   "keyToStringList": {
     "DatabaseDriversLRU": [
       "postgresql"
+    ],
+    "vue.recent.templates": [
+      "Vue Composition API Component"
     ]
   }
 }]]></component>
@@ -80,7 +80,7 @@
       <option name="presentableId" value="Default" />
       <updated>1748199297308</updated>
       <workItem from="1748199298411" duration="10796000" />
-      <workItem from="1748224847536" duration="996000" />
+      <workItem from="1748224847536" duration="2058000" />
     </task>
     <servers />
   </component>
