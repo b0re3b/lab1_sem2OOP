@@ -17,10 +17,10 @@ class DatabaseConfig(BaseSettings):
     # Основні параметри підключення
     DB_HOST: str = "localhost"
     DB_PORT: int = 5433
-    DB_NAME: str = "lab11"
+    DB_NAME: str = "lab1"
     DB_USER: str = "postgres"
     DB_PASSWORD: str = "28488476"
-    DB_SCHEMA: str = "airline"
+    DB_SCHEMA: str = "public"
 
     # SSL параметри
     DB_SSL_MODE: str = "prefer"  # disable, allow, prefer, require, verify-ca, verify-full

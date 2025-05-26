@@ -160,7 +160,8 @@ class LoggingConfig:
                 handler.close()
 
 
-
+def setup_logging(self) -> None:
+    logger_config.setup_logging()
 def get_logger(name: str = None) -> None:
     logger_config.get_logger(name)
 # Функції для зворотної сумісності та зручності використання

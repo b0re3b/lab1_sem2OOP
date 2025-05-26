@@ -19,7 +19,7 @@ class KeycloakConfig:
         self.client_id = os.getenv('KEYCLOAK_CLIENT_ID', 'airline-app')
         self.client_secret = os.getenv('KEYCLOAK_CLIENT_SECRET', '')
         self.admin_username = os.getenv('KEYCLOAK_ADMIN_USERNAME', 'admin')
-        self.admin_password = os.getenv('KEYCLOAK_ADMIN_PASSWORD', '')
+        self.admin_password = os.getenv('KEYCLOAK_ADMIN_PASSWORD', 'admin')
 
         # URLs для різних ендпоінтів
         self.auth_url = f"{self.server_url}/realms/{self.realm}/protocol/openid-connect/auth"
