@@ -5,51 +5,38 @@
   </component>
   <component name="ChangeListManager">
     <list default="true" id="d45641ad-b660-47b2-9b5c-88bd20087677" name="Changes" comment="">
-      <change beforePath="$PROJECT_DIR$/.idea/.gitignore" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/builder/__init__.py" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/builder/crew_builder.py" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/builder/flight_builder.py" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/config/__init__.py" beforeDir="false" afterPath="$PROJECT_DIR$/config/__init__.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/config/database.py" beforeDir="false" afterPath="$PROJECT_DIR$/config/database.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/config/logging_config.py" beforeDir="false" afterPath="$PROJECT_DIR$/config/logging_config.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/config/security.py" beforeDir="false" afterPath="$PROJECT_DIR$/config/keycloak.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/config/settings.py" beforeDir="false" afterPath="$PROJECT_DIR$/config/settings.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/factories/__init__.py" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/factories/repository_factory.py" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/factories/service_factory.py" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/models/base.py" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/models/crew_member.py" beforeDir="false" afterPath="$PROJECT_DIR$/models/crew_member.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/models/crew_position.py" beforeDir="false" afterPath="$PROJECT_DIR$/models/crew_position.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/models/flight.py" beforeDir="false" afterPath="$PROJECT_DIR$/models/flight.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/models/flight_assignment.py" beforeDir="false" afterPath="$PROJECT_DIR$/models/flight_assignment.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/models/log.py" beforeDir="false" afterPath="$PROJECT_DIR$/models/log.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/models/user.py" beforeDir="false" afterPath="$PROJECT_DIR$/models/user.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/repositories/assignment_repository.py" beforeDir="false" afterPath="$PROJECT_DIR$/repositories/assignment_repository.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/repositories/base.py" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/repositories/crew_repository.py" beforeDir="false" afterPath="$PROJECT_DIR$/repositories/crew_repository.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/repositories/flight_repository.py" beforeDir="false" afterPath="$PROJECT_DIR$/repositories/flight_repository.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/repositories/user_repository.py" beforeDir="false" afterPath="$PROJECT_DIR$/repositories/user_repository.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/services/__init__.py" beforeDir="false" afterPath="$PROJECT_DIR$/services/__init__.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/services/auth_service.py" beforeDir="false" afterPath="$PROJECT_DIR$/services/auth_service.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/services/base_service.py" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/services/crew_service.py" beforeDir="false" afterPath="$PROJECT_DIR$/services/crew_service.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/services/flight_service.py" beforeDir="false" afterPath="$PROJECT_DIR$/services/flight_service.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/services/notification_service.py" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/strategies/__init__.py" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/strategies/auth_strategy.py" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/strategies/validation_strategy.py" beforeDir="false" />
+      <change afterPath="$PROJECT_DIR$/airline-frontend/src/core/api.js" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/airline-frontend/src/style.css" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/airline-frontend/tailwind.config.js" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/.idea/sqldialects.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/sqldialects.xml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/airline-frontend/package-lock.json" beforeDir="false" afterPath="$PROJECT_DIR$/airline-frontend/package-lock.json" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/airline-frontend/package.json" beforeDir="false" afterPath="$PROJECT_DIR$/airline-frontend/package.json" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/airline-frontend/src/App.vue" beforeDir="false" afterPath="$PROJECT_DIR$/airline-frontend/src/App.vue" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/airline-frontend/src/main.js" beforeDir="false" afterPath="$PROJECT_DIR$/airline-frontend/src/main.js" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/airline-frontend/src/router/index.js" beforeDir="false" afterPath="$PROJECT_DIR$/airline-frontend/src/router/index.js" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/airline-frontend/src/stores/counter.js" beforeDir="false" afterPath="$PROJECT_DIR$/airline-frontend/src/stores/auth.js" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/airline-frontend/vite.config.js" beforeDir="false" afterPath="$PROJECT_DIR$/airline-frontend/vite.config.js" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
     <option name="HIGHLIGHT_NON_ACTIVE_CHANGELIST" value="false" />
     <option name="LAST_RESOLUTION" value="IGNORE" />
   </component>
+  <component name="FileTemplateManagerImpl">
+    <option name="RECENT_TEMPLATES">
+      <list>
+        <option value="JavaScript File" />
+        <option value="CSS File" />
+      </list>
+    </option>
+  </component>
   <component name="Git.Settings">
     <option name="RECENT_GIT_ROOT_PATH" value="$PROJECT_DIR$" />
   </component>
-  <component name="ProjectColorInfo"><![CDATA[{
-  "associatedIndex": 6
-}]]></component>
+  <component name="ProjectColorInfo">{
+  &quot;associatedIndex&quot;: 6
+}</component>
   <component name="ProjectId" id="2xbGKkjS02CyIyt8mIspngu48qm" />
   <component name="ProjectViewState">
     <option name="hideEmptyMiddlePackages" value="true" />
@@ -61,11 +48,14 @@
     "RunOnceActivity.ShowReadmeOnStart": "true",
     "RunOnceActivity.git.unshallow": "true",
     "git-widget-placeholder": "master",
+    "list.type.of.created.stylesheet": "CSS",
     "node.js.detected.package.eslint": "true",
     "node.js.detected.package.tslint": "true",
     "node.js.selected.package.eslint": "(autodetect)",
     "node.js.selected.package.tslint": "(autodetect)",
+    "nodejs_interpreter_path": "/home/b0r3d/.config/JetBrains/PyCharm2025.1/node/versions/22.16.0/bin/node",
     "nodejs_package_manager_path": "npm",
+    "ts.external.directory.path": "/snap/pycharm-professional/484/plugins/javascript-plugin/jsLanguageServicesImpl/external",
     "vue.rearranger.settings.migration": "true"
   },
   "keyToStringList": {
@@ -89,7 +79,8 @@
       <option name="number" value="Default" />
       <option name="presentableId" value="Default" />
       <updated>1748199297308</updated>
-      <workItem from="1748199298411" duration="9961000" />
+      <workItem from="1748199298411" duration="10796000" />
+      <workItem from="1748224847536" duration="996000" />
     </task>
     <servers />
   </component>
