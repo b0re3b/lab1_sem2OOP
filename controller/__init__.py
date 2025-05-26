@@ -1,0 +1,20 @@
+from .auth_controller import router as auth_router
+from .flight_controller import router as flight_router
+from .crew_controller import router as crew_router
+from .assignment_controller import router as assignment_router
+
+# Список всіх роутерів для реєстрації в основному додатку
+routers = [
+    auth_router,
+    flight_router,
+    crew_router,
+    assignment_router
+]
+
+__all__ = [
+    'auth_router',
+    'flight_router',
+    'crew_router',
+    'assignment_router',
+    'routers'
+]
