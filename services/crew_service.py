@@ -262,9 +262,7 @@ class CrewService:
         """
         log_info(f"Getting crew workload statistics from {start_date} to {end_date}")
 
-        # Тут можна додати логіку для обчислення статистики
-        # На основі призначень з assignment_repository
-        # Поки що повертаємо базову структуру
+
 
         statistics = {
             'period': {
@@ -310,8 +308,7 @@ class CrewService:
         if not crew_member or not crew_member.is_available:
             return False
 
-        # Перевірка конфліктів з існуючими призначеннями
-        # Це буде реалізовано через assignment_service або repository
+
         available_crew = self.get_available_crew_for_flight(None, start_time, end_time)
         return any(member.id == crew_member_id for member in available_crew)
 

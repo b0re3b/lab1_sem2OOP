@@ -8,13 +8,15 @@ from repositories.assignment_repository import AssignmentRepository
 from models.flight import Flight
 from utils.validators import FlightValidator, ValidationError
 from utils.mappers import FlightMapper
-from utils.decorators import log_execution, handle_exceptions, validate_input
+from utils.decorators import LoggingDecorators, ErrorHandlingDecorators, ValidationDecorators
 from config.logging_config import log_info, log_error, log_warning
 
 
 class FlightService:
     """Сервіс для управління рейсами"""
-
+    log_execution = LoggingDecorators.log_execution
+    handle_exceptions = ErrorHandlingDecorators.handle_exceptions
+    validate_input = ValidationDecorators.validate_input
     def __init__(self):
         self.flight_repository = FlightRepository()
         self.assignment_repository = AssignmentRepository()
