@@ -1,7 +1,6 @@
 import logging
 import logging.handlers
 import os
-from datetime import datetime
 from typing import Optional
 
 
@@ -161,10 +160,9 @@ class LoggingConfig:
                 handler.close()
 
 
-# Глобальний екземпляр для використання в додатку
-logger_config = LoggingConfig()
 
-
+def get_logger(name: str = None) -> None:
+    logger_config.get_logger(name)
 # Функції для зворотної сумісності та зручності використання
 def log_info(message: str) -> None:
     """Логування інформаційних повідомлень"""
@@ -203,3 +201,5 @@ def log_auth_event(event_type: str, username: str, ip_address: Optional[str] = N
                    success: bool = True) -> None:
     """Логування подій авторизації"""
     logger_config.log_auth_event(event_type, username, ip_address, success)
+# Глобальний екземпляр для використання в додатку
+logger_config = LoggingConfig()
